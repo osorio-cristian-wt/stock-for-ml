@@ -1,0 +1,5 @@
+# Local convenience for `fastlane match`. CI passes these via env vars.
+git_url(ENV["MATCH_GIT_URL"])
+storage_mode("git")
+type("appstore")
+app_identifier(["com.stockforml.stockForMl"])

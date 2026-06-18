@@ -1,0 +1,6 @@
+report.xml
+Preview.html
+screenshots/**/*.png
+test_output
+*.ipa
+*.dSYM.zip

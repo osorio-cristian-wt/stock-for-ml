@@ -1,0 +1,5 @@
+app_identifier("com.stockforml.stockForMl")
+
+# Team is resolved from the App Store Connect API key; set APPLE_TEAM_ID to
+# disambiguate if your Apple account belongs to multiple teams.
+team_id(ENV["APPLE_TEAM_ID"]) if ENV["APPLE_TEAM_ID"]
