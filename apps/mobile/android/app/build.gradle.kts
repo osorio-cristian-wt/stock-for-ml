@@ -20,8 +20,10 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.stockforml.stock_for_ml"
+        // Store identity (must match across platforms). The internal `namespace`
+        // above (R class / Kotlin package) intentionally stays as the generated
+        // value — it is invisible to users and changing it would move sources.
+        applicationId = "com.stockforml.app"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion

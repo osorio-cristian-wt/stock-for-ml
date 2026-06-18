@@ -1,6 +1,6 @@
 default_platform(:ios)
 
-APP_ID = "com.stockforml.stockForMl"
+APP_ID = "com.stockforml.app"
 
 platform :ios do
   desc "Build the app and upload it to TestFlight"

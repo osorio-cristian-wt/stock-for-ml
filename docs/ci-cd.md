@@ -67,7 +67,7 @@ partir de ahí, el CI solo los consume.
 ## Notas
 
 - El número de build de TestFlight = número de run de GitHub (`github.run_number`).
-- El bundle id es `com.stockforml.stockForMl` (generado por Flutter). Si preferís
-  uno más limpio (ej. `com.stockforml.app`), cambialo en Xcode **antes** del
-  primer `match` y actualizá `Appfile`/`Matchfile`/`Fastfile`.
+- El bundle id / applicationId es `com.stockforml.app` (en iOS y Android). El
+  `namespace` interno de Android sigue siendo el generado por Flutter
+  (`com.stockforml.stock_for_ml`) — es invisible para el usuario.
 - Para push notifications en los builds de TestFlight, ver [firebase.md](firebase.md).

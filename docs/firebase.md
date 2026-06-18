@@ -23,7 +23,7 @@ configura es **Firebase ↔ APNs (Apple Push Notification service)**.
 
 ### 2. Registrar la app iOS en Firebase
 1. En el proyecto → **Add app** → iOS.
-2. **Bundle ID**: `com.stockforml.stockForMl` (el del proyecto; ver ci-cd.md si lo cambiás).
+2. **Bundle ID**: `com.stockforml.app` (el del proyecto; ver ci-cd.md si lo cambiás).
 3. Descargar **`GoogleService-Info.plist`** y colocarlo en
    `apps/mobile/ios/Runner/GoogleService-Info.plist` (agregarlo al target Runner
    en Xcode). *(Para Android, más adelante: `google-services.json` en `apps/mobile/android/app/`.)*
