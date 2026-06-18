@@ -1,0 +1,48 @@
+# ─── Secrets / env ───────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+**/signing_keys.json
+
+# ─── Dart / Flutter ──────────────────────────────────────────────
+.dart_tool/
+.packages
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+**/doc/api/
+coverage/
+*.lock.bak
+.fvm/
+
+# Generated code (build_runner) — keep *.g.dart out unless you commit them
+# *.g.dart
+# *.freezed.dart
+
+# IDE
+.idea/
+.vscode/
+!.vscode/extensions.json
+*.iml
+*.ipr
+*.iws
+
+# ─── Android / iOS local config ──────────────────────────────────
+**/android/local.properties
+**/android/key.properties
+**/ios/Flutter/Generated.xcconfig
+**/ios/Pods/
+**/*.keystore
+
+# ─── Supabase ────────────────────────────────────────────────────
+supabase/.temp/
+supabase/.branches/
+supabase/seed-local.sql
+
+# ─── Node (edge function tooling, if any) ────────────────────────
+node_modules/
+
+# ─── OS ──────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db

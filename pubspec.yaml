@@ -1,0 +1,13 @@
+# Root of the Pub Workspace (Dart 3.6+ native monorepo support).
+# This package is not published; it only declares the workspace members.
+# Each member sets `resolution: workspace` in its own pubspec.yaml so they share
+# a single `.dart_tool/package_config.json` and a single resolved dependency set.
+name: _stock_for_ml_workspace
+publish_to: none
+
+environment:
+  sdk: ^3.8.0
+
+workspace:
+  - apps/mobile
+  - packages/core_models
