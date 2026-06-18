@@ -2,6 +2,9 @@
 
 > Estado: vivo. Última actualización: 2026-06-18.
 > Deriva de las decisiones en [research/04-decisiones-pendientes.md](research/04-decisiones-pendientes.md).
+> Diseño detallado de estados de stock, sincronización con ML (anti-ciclo),
+> reconciliación de órdenes y clasificación por LLM: ver
+> [diseno-stock-estados.md](diseno-stock-estados.md).
 
 ## 1. Alcance y supuestos
 
