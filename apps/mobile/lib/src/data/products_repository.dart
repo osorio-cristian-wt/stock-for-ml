@@ -26,14 +26,29 @@ class ProductsRepository {
     await _client.from('products').update({'purchase_cost': cost}).eq('id', productId);
   }
 
+  /// Barcode-first "already exists?" check: matches a scanned code against the
+  /// global barcode (gtin) or the internal sku. Returns null if it's new.
+  Future<Product?> findByCode(String code) async {
+    final rows = await _client
+        .from('products')
+        .select()
+        .or('gtin.eq.$code,sku.eq.$code')
+        .limit(1);
+    return rows.isEmpty ? null : Product.fromJson(rows.first);
+  }
+
   /// Registers a stock movement via the SECURITY INVOKER RPC; the DB trigger
-  /// recomputes current_stock and may raise a low-stock alert.
+  /// updates product_stock buckets, recomputes current_stock (available) and —
+  /// for user/system origin — enqueues an ML push.
   Future<void> applyStockMovement({
     required String productId,
     required int delta,
     required StockReason reason,
     String? reference,
     String? note,
+    String? warehouseId,
+    StockBucket bucket = StockBucket.onHand,
+    StockOrigin origin = StockOrigin.user,
   }) async {
     await _client.rpc('apply_stock_movement', params: {
       'p_product_id': productId,
@@ -41,6 +56,9 @@ class ProductsRepository {
       'p_reason': reason.wire,
       'p_reference': reference,
       'p_note': note,
+      'p_warehouse_id': warehouseId,
+      'p_bucket': bucket.wire,
+      'p_origin': origin.wire,
     });
   }
 

@@ -13,6 +13,7 @@ dependencies:
   cupertino_icons: ^1.0.8
   flutter_riverpod: ^2.6.1
   supabase_flutter: ^2.8.0
+  mobile_scanner: ^5.2.3
   core_models:
     path: ../../packages/core_models
 
