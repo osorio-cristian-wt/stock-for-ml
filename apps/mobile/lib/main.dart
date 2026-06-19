@@ -9,7 +9,8 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   await Supabase.initialize(
-    url: Env.supabaseUrl,
+    // resolvedSupabaseUrl maps localhost → 10.0.2.2 on the Android emulator.
+    url: Env.resolvedSupabaseUrl,
     // Supabase's new key format ("sb_publishable_..."). Replaces the legacy
     // anon JWT key.
     publishableKey: Env.supabaseAnonKey,
