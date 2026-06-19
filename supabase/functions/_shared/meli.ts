@@ -161,6 +161,18 @@ export class MeliClient {
     return this.req(`/sites/${siteId}/domain_discovery/search?q=${encodeURIComponent(q)}`);
   }
 
+  /** Public marketplace search — used for in-ML price comparison. */
+  searchListings(
+    siteId: string,
+    p: { categoryId?: string; q?: string; limit?: number },
+  ): Promise<{ results: MeliSearchItem[] }> {
+    const qs = new URLSearchParams();
+    if (p.categoryId) qs.set("category", p.categoryId);
+    if (p.q) qs.set("q", p.q);
+    qs.set("limit", String(p.limit ?? 20));
+    return this.req(`/sites/${siteId}/search?${qs.toString()}`);
+  }
+
   /** Publish an item against an existing catalog product. */
   createCatalogListing(itemId: string, catalogProductId: string): Promise<MeliItem> {
     return this.req(`/items/catalog_listings`, {
@@ -224,6 +236,19 @@ export interface MeliListingPrice {
   listing_type_id: string;
   sale_fee_amount: number;
   sale_fee_details?: Record<string, number>;
+}
+
+// A result row from /sites/{site}/search (only the fields we use).
+export interface MeliSearchItem {
+  id: string;
+  title?: string;
+  price?: number;
+  currency_id?: string;
+  sold_quantity?: number;
+  available_quantity?: number;
+  permalink?: string;
+  seller?: { id?: number; nickname?: string };
+  shipping?: { logistic_type?: string; free_shipping?: boolean };
 }
 
 // Catalog product returned by /products/search (only the fields we use).
