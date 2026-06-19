@@ -10,6 +10,9 @@ class Product {
     required this.profileId,
     required this.title,
     this.sku,
+    this.gtin,
+    this.categoryId,
+    this.brand,
     this.description,
     this.purchaseCost = 0,
     this.purchaseCurrency = 'USD',
@@ -25,6 +28,11 @@ class Product {
   final String profileId;
   final String title;
   final String? sku;
+
+  /// Global barcode (EAN/UPC). Distinct from [sku] (internal code).
+  final String? gtin;
+  final String? categoryId;
+  final String? brand;
   final String? description;
   final double purchaseCost;
   final String purchaseCurrency;
@@ -40,6 +48,9 @@ class Product {
         profileId: json['profile_id'] as String,
         title: json['title'] as String,
         sku: json['sku'] as String?,
+        gtin: json['gtin'] as String?,
+        categoryId: json['category_id'] as String?,
+        brand: json['brand'] as String?,
         description: json['description'] as String?,
         purchaseCost: asDouble(json['purchase_cost']),
         purchaseCurrency: (json['purchase_currency'] as String?) ?? 'USD',
@@ -56,6 +67,9 @@ class Product {
         'profile_id': profileId,
         'title': title,
         if (sku != null) 'sku': sku,
+        if (gtin != null) 'gtin': gtin,
+        if (categoryId != null) 'category_id': categoryId,
+        if (brand != null) 'brand': brand,
         if (description != null) 'description': description,
         'purchase_cost': purchaseCost,
         'purchase_currency': purchaseCurrency,
@@ -72,6 +86,9 @@ class Product {
   Product copyWith({
     String? title,
     String? sku,
+    String? gtin,
+    String? categoryId,
+    String? brand,
     double? purchaseCost,
     String? purchaseCurrency,
     int? currentStock,
@@ -83,6 +100,9 @@ class Product {
         profileId: profileId,
         title: title ?? this.title,
         sku: sku ?? this.sku,
+        gtin: gtin ?? this.gtin,
+        categoryId: categoryId ?? this.categoryId,
+        brand: brand ?? this.brand,
         description: description,
         purchaseCost: purchaseCost ?? this.purchaseCost,
         purchaseCurrency: purchaseCurrency ?? this.purchaseCurrency,

@@ -2,6 +2,30 @@ import 'package:meta/meta.dart';
 
 import 'json.dart';
 
+/// Fulfillment lifecycle of an order line (derived from order + shipment state).
+enum FulfillmentStatus { reserved, shipped, delivered, cancelled, bounced, lost }
+
+extension FulfillmentStatusX on FulfillmentStatus {
+  String get wire => switch (this) {
+        FulfillmentStatus.reserved => 'reserved',
+        FulfillmentStatus.shipped => 'shipped',
+        FulfillmentStatus.delivered => 'delivered',
+        FulfillmentStatus.cancelled => 'cancelled',
+        FulfillmentStatus.bounced => 'bounced',
+        FulfillmentStatus.lost => 'lost',
+      };
+
+  static FulfillmentStatus? fromWire(String? v) => switch (v) {
+        'reserved' => FulfillmentStatus.reserved,
+        'shipped' => FulfillmentStatus.shipped,
+        'delivered' => FulfillmentStatus.delivered,
+        'cancelled' => FulfillmentStatus.cancelled,
+        'bounced' => FulfillmentStatus.bounced,
+        'lost' => FulfillmentStatus.lost,
+        _ => null,
+      };
+}
+
 /// A sale (order) imported from MercadoLibre.
 @immutable
 class Sale {
@@ -18,6 +42,7 @@ class Sale {
     this.shippingCost = 0,
     this.netAmount,
     this.status,
+    this.fulfillmentStatus,
     this.soldAt,
   });
 
@@ -33,6 +58,7 @@ class Sale {
   final double shippingCost;
   final double? netAmount;
   final String? status;
+  final FulfillmentStatus? fulfillmentStatus;
   final DateTime? soldAt;
 
   double get gross => unitPrice * quantity;
@@ -50,6 +76,8 @@ class Sale {
         shippingCost: asDouble(json['shipping_cost']),
         netAmount: asDoubleOrNull(json['net_amount']),
         status: json['status'] as String?,
+        fulfillmentStatus:
+            FulfillmentStatusX.fromWire(json['fulfillment_status'] as String?),
         soldAt: asDateTime(json['sold_at']),
       );
 }
