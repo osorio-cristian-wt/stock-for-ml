@@ -45,5 +45,20 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Usamos la cámara para escanear códigos de barras de tus productos.</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>com.stockforml.auth</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>stockforml</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

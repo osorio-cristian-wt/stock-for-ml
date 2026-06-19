@@ -26,6 +26,18 @@ class ProductsRepository {
     await _client.from('products').update({'purchase_cost': cost}).eq('id', productId);
   }
 
+  /// Updates the editable fields of an existing product (title, codes, cost,
+  /// threshold, etc). Stock is never edited here — it flows through the ledger.
+  Future<Product> update(Product product) async {
+    final row = await _client
+        .from('products')
+        .update(product.toInsert())
+        .eq('id', product.id)
+        .select()
+        .single();
+    return Product.fromJson(row);
+  }
+
   /// Barcode-first "already exists?" check: matches a scanned code against the
   /// global barcode (gtin) or the internal sku. Returns null if it's new.
   Future<Product?> findByCode(String code) async {
