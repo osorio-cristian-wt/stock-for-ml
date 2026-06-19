@@ -26,3 +26,10 @@ export const supabaseConfig = () => ({
   url: env("SUPABASE_URL"),
   serviceRoleKey: env("SUPABASE_SERVICE_ROLE_KEY"),
 });
+
+// Anthropic (LLM fallback classifier). Only required by classify-product.
+export const anthropicConfig = () => ({
+  apiKey: env("ANTHROPIC_API_KEY"),
+  model: env("ANTHROPIC_MODEL", "claude-haiku-4-5"),
+  apiBase: env("ANTHROPIC_API_BASE", "https://api.anthropic.com"),
+});

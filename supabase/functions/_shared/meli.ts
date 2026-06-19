@@ -146,6 +146,29 @@ export class MeliClient {
     return this.req(`/orders/search?seller=${sellerId}&sort=date_desc&offset=${offset}&limit=${limit}`);
   }
 
+  getShipment(shipmentId: string): Promise<MeliShipment> {
+    return this.req(`/shipments/${shipmentId}`);
+  }
+
+  /** Search the ML catalog by a GTIN (EAN/UPC/ISBN). status=active => publishable. */
+  searchProductsByGtin(siteId: string, gtin: string): Promise<{ results: MeliCatalogProduct[] }> {
+    const qs = new URLSearchParams({ status: "active", site_id: siteId, product_identifier: gtin });
+    return this.req(`/products/search?${qs.toString()}`);
+  }
+
+  /** Predict ML domain/category from a free-text title (no LLM needed). */
+  predictDomain(siteId: string, q: string): Promise<MeliDomainPrediction[]> {
+    return this.req(`/sites/${siteId}/domain_discovery/search?q=${encodeURIComponent(q)}`);
+  }
+
+  /** Publish an item against an existing catalog product. */
+  createCatalogListing(itemId: string, catalogProductId: string): Promise<MeliItem> {
+    return this.req(`/items/catalog_listings`, {
+      method: "POST",
+      body: JSON.stringify({ item_id: itemId, catalog_product_id: catalogProductId }),
+    });
+  }
+
   /** Read-only listing fees for a category/price. */
   getListingPrices(siteId: string, price: number, categoryId?: string, listingTypeId?: string): Promise<MeliListingPrice[]> {
     const qs = new URLSearchParams({ price: String(price) });
@@ -187,10 +210,36 @@ export interface MeliOrder {
   seller: { id: number };
   order_items: MeliOrderItem[];
   payments?: { total_paid_amount: number }[];
+  shipping?: { id: number };
+}
+
+export interface MeliShipment {
+  id: number;
+  order_id?: number;
+  status: string;       // pending | ready_to_ship | shipped | delivered | not_delivered | ...
+  substatus?: string;
 }
 
 export interface MeliListingPrice {
   listing_type_id: string;
   sale_fee_amount: number;
   sale_fee_details?: Record<string, number>;
+}
+
+// Catalog product returned by /products/search (only the fields we use).
+export interface MeliCatalogProduct {
+  id: string;            // catalog_product_id
+  name: string;
+  status: string;        // active | inactive
+  domain_id?: string;
+  attributes?: { id: string; name: string; value_name?: string }[];
+  pictures?: { url: string }[];
+}
+
+export interface MeliDomainPrediction {
+  domain_id: string;
+  domain_name: string;
+  category_id?: string;
+  category_name?: string;
+  attributes?: { id: string; value_id?: string; value_name?: string }[];
 }

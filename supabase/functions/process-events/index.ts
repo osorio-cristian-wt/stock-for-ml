@@ -5,7 +5,7 @@ import { mlConfig } from "../_shared/env.ts";
 import { createAdminClient } from "../_shared/supabaseAdmin.ts";
 import { MeliClient } from "../_shared/meli.ts";
 import { getValidAccessToken } from "../_shared/credentials.ts";
-import { processOrder, MlAccountRow } from "../_shared/orders.ts";
+import { processOrder, processShipment, MlAccountRow } from "../_shared/orders.ts";
 import { upsertItem, resourceId } from "../_shared/items.ts";
 
 const BATCH = 25;
@@ -39,6 +39,17 @@ Deno.serve(async (req) => {
       if (ev.topic.startsWith("orders")) {
         const order = await client.getOrder(id);
         await processOrder(admin, account, order, client);
+      } else if (ev.topic === "shipments") {
+        const shipment = await client.getShipment(id);
+        await processShipment(admin, account, shipment, client);
+      } else if (ev.topic === "claims") {
+        // Returns require user inspection before re-stocking (no auto-restore).
+        await admin.from("alerts").insert({
+          profile_id: account.profile_id,
+          type: "return_pending",
+          message: `Devolución/reclamo pendiente de revisión (${ev.resource}). ` +
+            `Inspeccioná y, si corresponde, reingresá el stock.`,
+        });
       } else if (ev.topic === "items" || ev.topic === "items_prices") {
         await upsertItem(admin, account, client, id, cfg.siteId);
       }
