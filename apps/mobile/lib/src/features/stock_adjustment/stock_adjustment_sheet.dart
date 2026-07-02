@@ -30,6 +30,7 @@ class _StockAdjustmentSheetState extends ConsumerState<StockAdjustmentSheet> {
   StockReason _reason = StockReason.purchase;
   int _amount = 1;
   int _adjustSign = 1; // only used when reason == adjustment
+  String? _warehouseId; // null => server resolves to the default warehouse
   bool _busy = false;
   String? _error;
 
@@ -64,6 +65,7 @@ class _StockAdjustmentSheetState extends ConsumerState<StockAdjustmentSheet> {
             productId: widget.product.id,
             delta: _delta,
             reason: _reason,
+            warehouseId: _warehouseId,
             origin: StockOrigin.user,
           );
       ref.invalidate(dashboardProvider);
@@ -127,6 +129,10 @@ class _StockAdjustmentSheetState extends ConsumerState<StockAdjustmentSheet> {
                 onSelect: (r) => setState(() => _reason = r),
               ),
               const SizedBox(height: 18),
+              _WarehouseField(
+                selectedId: _warehouseId,
+                onChanged: (id) => setState(() => _warehouseId = id),
+              ),
               if (_reason == StockReason.adjustment) ...[
                 _SignToggle(
                   sign: _adjustSign,
@@ -194,6 +200,54 @@ class _StockAdjustmentSheetState extends ConsumerState<StockAdjustmentSheet> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Warehouse picker, shown only when the user has more than one warehouse.
+/// Defaults to the principal (dispatch) warehouse.
+class _WarehouseField extends ConsumerWidget {
+  const _WarehouseField({required this.selectedId, required this.onChanged});
+
+  final String? selectedId;
+  final ValueChanged<String?> onChanged;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final warehouses =
+        ref.watch(warehousesStreamProvider).valueOrNull ?? const <Warehouse>[];
+    if (warehouses.length < 2) return const SizedBox.shrink();
+    final defaultId = warehouses
+        .firstWhere((w) => w.isDefault, orElse: () => warehouses.first)
+        .id;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Padding(
+          padding: EdgeInsets.only(bottom: 6, left: 2),
+          child: Text('Depósito',
+              style: TextStyle(
+                  fontSize: 12,
+                  color: AppColors.textMuted,
+                  fontWeight: FontWeight.w500)),
+        ),
+        DropdownButtonFormField<String?>(
+          value: selectedId ?? defaultId,
+          isExpanded: true,
+          dropdownColor: AppColors.surface,
+          style: const TextStyle(color: AppColors.textPrimary, fontSize: 14),
+          icon: const Icon(Icons.expand_more, color: AppColors.textFaint),
+          items: [
+            for (final w in warehouses)
+              DropdownMenuItem<String?>(
+                value: w.id,
+                child: Text(w.isDefault ? '${w.name} · principal' : w.name),
+              ),
+          ],
+          onChanged: onChanged,
+        ),
+        const SizedBox(height: 18),
+      ],
     );
   }
 }
