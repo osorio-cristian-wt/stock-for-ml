@@ -3,11 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/queries.dart';
+import '../../data/supabase_providers.dart';
 import '../../theme/app_colors.dart';
 import '../../ui/format.dart';
 import '../../ui/widgets/app_widgets.dart';
 import '../price_comparison/price_comparison_screen.dart';
 import '../stock_adjustment/stock_adjustment_sheet.dart';
+import '../stock_adjustment/transfer_sheet.dart';
 import 'product_form_screen.dart';
 
 /// Screen 05 · Detalle con rentabilidad por unidad. Reactive to the live
@@ -92,6 +94,8 @@ class _Body extends StatelessWidget {
           _InternalCostCard(product: product),
         const SizedBox(height: 12),
         _StockCard(product: product),
+        _WarehouseStockCard(product: product),
+        _HistoryCard(productId: product.id),
         if (published) ...[
           const SizedBox(height: 12),
           SurfaceCard(
@@ -120,7 +124,165 @@ class _Body extends StatelessWidget {
             ),
           ),
         ],
+        if (!published) _LinkMlCard(product: product),
       ],
+    );
+  }
+}
+
+/// Lets the user pair an existing ML publication with this internal product.
+/// Hidden when ML isn't connected. The publication title stays independent.
+class _LinkMlCard extends ConsumerWidget {
+  const _LinkMlCard({required this.product});
+
+  final Product product;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final connected = ref.watch(mlAccountProvider).valueOrNull != null;
+    if (!connected) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: SurfaceCard(
+        onTap: () => showModalBottomSheet<void>(
+          context: context,
+          isScrollControlled: true,
+          builder: (_) => _LinkMlSheet(product: product),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                color: AppColors.mlYellow,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(Icons.link_rounded, color: AppColors.onMlYellow, size: 20),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Vincular publicación de ML',
+                      style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textPrimary)),
+                  Text('Pegá el código (MLA…) de una publicación existente',
+                      style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right, color: AppColors.textFaint),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _LinkMlSheet extends ConsumerStatefulWidget {
+  const _LinkMlSheet({required this.product});
+
+  final Product product;
+
+  @override
+  ConsumerState<_LinkMlSheet> createState() => _LinkMlSheetState();
+}
+
+class _LinkMlSheetState extends ConsumerState<_LinkMlSheet> {
+  final _code = TextEditingController();
+  bool _busy = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _code.dispose();
+    super.dispose();
+  }
+
+  Future<void> _confirm() async {
+    final code = _code.text.trim().toUpperCase();
+    if (code.isEmpty) {
+      setState(() => _error = 'Ingresá el código de la publicación.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await ref.read(connectionRepositoryProvider).linkListing(
+            productId: widget.product.id,
+            mlItemId: code,
+          );
+      ref.invalidate(economicsProvider);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Publicación vinculada')),
+        );
+        Navigator.of(context).pop();
+      }
+    } catch (e) {
+      setState(() {
+        _busy = false;
+        _error = 'No se pudo vincular. ${e.toString().split('\n').first}';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(22, 16, 22, 22),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text('Vincular publicación de ML',
+                  style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.textPrimary)),
+              const SizedBox(height: 6),
+              Text(widget.product.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 13, color: AppColors.textMuted)),
+              const SizedBox(height: 16),
+              TextField(
+                controller: _code,
+                autofocus: true,
+                textCapitalization: TextCapitalization.characters,
+                style: const TextStyle(color: AppColors.textPrimary, fontSize: 14),
+                decoration: const InputDecoration(hintText: 'MLA1234567890'),
+              ),
+              if (_error != null) ...[
+                const SizedBox(height: 10),
+                Text(_error!,
+                    style: const TextStyle(color: AppColors.danger, fontSize: 13)),
+              ],
+              const SizedBox(height: 16),
+              FilledButton(
+                onPressed: _busy ? null : _confirm,
+                child: _busy
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2.4, color: AppColors.onPrimary),
+                      )
+                    : const Text('Vincular'),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -344,6 +506,219 @@ class _StockCard extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Per-warehouse stock breakdown + transfer action. Reactive to the live
+/// product_stock stream. Hidden when there's nothing useful to show.
+class _WarehouseStockCard extends ConsumerWidget {
+  const _WarehouseStockCard({required this.product});
+
+  final Product product;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final rows =
+        ref.watch(stockByWarehouseProvider(product.id)).valueOrNull ??
+            const <ProductStock>[];
+    final warehouses =
+        ref.watch(warehousesStreamProvider).valueOrNull ?? const <Warehouse>[];
+    if (rows.isEmpty && warehouses.length < 2) return const SizedBox.shrink();
+
+    final byId = {for (final w in warehouses) w.id: w};
+    final canTransfer = warehouses.length > 1;
+    // Show meaningful buckets first (where there is any quantity).
+    final shown = rows
+        .where((s) => s.onHand != 0 || s.reserved != 0 || s.incoming != 0)
+        .toList()
+      ..sort((a, b) => b.available.compareTo(a.available));
+
+    return Column(
+      children: [
+        const SizedBox(height: 12),
+        SurfaceCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Expanded(
+                    child: Text('Stock por depósito',
+                        style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                            color: AppColors.textMuted)),
+                  ),
+                  if (canTransfer)
+                    TextButton.icon(
+                      onPressed: () =>
+                          TransferSheet.show(context, product: product),
+                      icon: const Icon(Icons.swap_horiz_rounded, size: 16),
+                      style: TextButton.styleFrom(
+                        foregroundColor: AppColors.primary,
+                        padding: EdgeInsets.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      label: const Text('Transferir'),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              if (shown.isEmpty)
+                const Text('Sin stock cargado en ningún depósito.',
+                    style: TextStyle(fontSize: 13, color: AppColors.textMuted))
+              else
+                for (final s in shown) ...[
+                  _WarehouseStockRow(stock: s, warehouse: byId[s.warehouseId]),
+                  const SizedBox(height: 8),
+                ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _WarehouseStockRow extends StatelessWidget {
+  const _WarehouseStockRow({required this.stock, this.warehouse});
+
+  final ProductStock stock;
+  final Warehouse? warehouse;
+
+  @override
+  Widget build(BuildContext context) {
+    final extras = <String>[
+      if (stock.reserved != 0) 'reservado ${stock.reserved}',
+      if (stock.incoming != 0) 'en camino ${stock.incoming}',
+    ];
+    final name = (warehouse?.name ?? 'Depósito') +
+        (warehouse?.isDefault == true ? ' · principal' : '');
+    return Row(
+      children: [
+        const Icon(Icons.warehouse_outlined, size: 16, color: AppColors.textFaint),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(name,
+                  style: const TextStyle(
+                      fontSize: 13,
+                      color: AppColors.textBody,
+                      fontWeight: FontWeight.w500)),
+              if (extras.isNotEmpty)
+                Text(extras.join(' · '),
+                    style: const TextStyle(fontSize: 11, color: AppColors.textMuted)),
+            ],
+          ),
+        ),
+        Text('${stock.available} disp.',
+            style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+                color: AppColors.textPrimary)),
+      ],
+    );
+  }
+}
+
+/// Per-product timeline: purchases, adjustments, transfers and ML sales.
+class _HistoryCard extends ConsumerWidget {
+  const _HistoryCard({required this.productId});
+
+  final String productId;
+
+  IconData _icon(HistoryKind k) => switch (k) {
+        HistoryKind.sale => Icons.shopping_bag_outlined,
+        HistoryKind.purchase => Icons.local_shipping_outlined,
+        HistoryKind.adjustment => Icons.tune_rounded,
+        HistoryKind.transfer => Icons.swap_horiz_rounded,
+        HistoryKind.returned => Icons.undo_rounded,
+        HistoryKind.initial => Icons.flag_outlined,
+        HistoryKind.other => Icons.circle_outlined,
+      };
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final entries =
+        ref.watch(productHistoryProvider(productId)).valueOrNull ??
+            const <ProductHistoryEntry>[];
+    if (entries.isEmpty) return const SizedBox.shrink();
+    final shown = entries.take(30).toList();
+
+    return Column(
+      children: [
+        const SizedBox(height: 12),
+        SurfaceCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Historial',
+                  style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      color: AppColors.textMuted)),
+              const SizedBox(height: 12),
+              for (var i = 0; i < shown.length; i++) ...[
+                _HistoryRow(entry: shown[i], icon: _icon(shown[i].kind)),
+                if (i != shown.length - 1)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 9),
+                    child: Divider(height: 1, color: AppColors.border),
+                  ),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _HistoryRow extends StatelessWidget {
+  const _HistoryRow({required this.entry, required this.icon});
+
+  final ProductHistoryEntry entry;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    final positive = entry.signedQty >= 0;
+    final qtyText = '${positive ? '+' : '−'}${entry.signedQty.abs()} u';
+    return Row(
+      children: [
+        Icon(icon, size: 18, color: AppColors.textSecondary),
+        const SizedBox(width: 11),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(entry.label,
+                  style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textPrimary)),
+              if (entry.reference != null)
+                Text('#${entry.reference!.length > 12 ? entry.reference!.substring(0, 12) : entry.reference}',
+                    style: const TextStyle(fontSize: 11, color: AppColors.textMuted)),
+            ],
+          ),
+        ),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text(qtyText,
+                style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: positive ? AppColors.primary : AppColors.danger)),
+            Text(Fmt.shortDate(entry.date),
+                style: const TextStyle(fontSize: 11, color: AppColors.textMuted)),
+          ],
+        ),
+      ],
     );
   }
 }

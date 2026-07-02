@@ -62,4 +62,20 @@ class ConnectionRepository {
   Future<void> triggerInitialSync() async {
     await _client.functions.invoke('sync-items');
   }
+
+  /// Links an existing ML publication (e.g. "MLA123") to an internal product.
+  /// Read-only ML access; the publication's title stays independent from stock.
+  Future<void> linkListing({
+    required String productId,
+    required String mlItemId,
+  }) async {
+    final res = await _client.functions.invoke('link-ml-listing', body: {
+      'product_id': productId,
+      'ml_item_id': mlItemId,
+    });
+    final data = res.data as Map<String, dynamic>?;
+    if (data == null || data['error'] != null) {
+      throw StateError(data?['error']?.toString() ?? 'No se pudo vincular.');
+    }
+  }
 }
