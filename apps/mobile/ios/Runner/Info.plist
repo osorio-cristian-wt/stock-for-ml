@@ -45,5 +45,33 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Usamos la cámara para escanear códigos de barras y fotografiar facturas de compra.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Usamos tus fotos para leer facturas de compra que ya tengas guardadas.</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>com.stockforml.auth</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>stockforml</string>
+			</array>
+		</dict>
+	</array>
+	<!-- Allow cleartext HTTP to local/LAN hosts only (Supabase local dev on the
+	     iOS simulator). Production uses HTTPS, so ATS stays on for the internet. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<!-- No proprietary/non-exempt encryption → skips the TestFlight export
+	     compliance prompt on every upload. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 </dict>
 </plist>
