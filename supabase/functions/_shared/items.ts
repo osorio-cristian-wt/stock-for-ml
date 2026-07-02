@@ -17,6 +17,7 @@ export async function upsertItem(
   client: MeliClient,
   itemId: string,
   siteId: string,
+  forceProductId?: string,
 ): Promise<void> {
   const item: MeliItem = await client.getItem(itemId);
 
@@ -28,19 +29,97 @@ export async function upsertItem(
     .eq("ml_item_id", item.id)
     .maybeSingle();
 
-  let productId = existing?.product_id ?? null;
+  // Caller asked to link this listing to a specific internal product (user
+  // pairing an existing publication to a stock item). Force the link and skip
+  // dedup/creation/stock seeding — the app stays the source of truth for stock.
+  let forcedProductId: string | null = null;
+  if (forceProductId) {
+    forcedProductId = forceProductId;
+    await admin.from("stock_push_queue").upsert(
+      {
+        product_id: forceProductId,
+        status: "pending",
+        enqueued_at: new Date().toISOString(),
+        processed_at: null,
+        error: null,
+      },
+      { onConflict: "product_id" },
+    );
+  }
+
+  // First import of this listing: link or create the internal product. Because
+  // the app is the source of truth for stock, we ONLY seed stock for brand-new
+  // products. If the product already exists (matched by GTIN/SKU) we link the
+  // listing and push our local stock to ML instead of pulling ML's number.
+  let productId = forcedProductId ?? existing?.product_id ?? null;
   if (!productId) {
-    const { data: prod } = await admin
-      .from("products")
-      .insert({
-        profile_id: account.profile_id,
-        title: item.title,
-        image_url: item.thumbnail,
-        sku: item.id, // default SKU = ML id; user can edit later
-      })
-      .select("id")
-      .single();
-    productId = prod?.id ?? null;
+    const gtin =
+      item.attributes?.find((a) => a.id === "GTIN")?.value_name?.trim() || null;
+    const skuField = (item.seller_custom_field ??
+      item.attributes?.find((a) => a.id === "SELLER_SKU")?.value_name ?? "").trim();
+    const sku = skuField.length > 0 ? skuField : null;
+
+    // Dedup against the internal catalog.
+    let matchId: string | null = null;
+    const ors: string[] = [];
+    if (gtin) ors.push(`gtin.eq.${gtin}`);
+    if (sku) ors.push(`sku.eq.${sku}`);
+    if (ors.length > 0) {
+      const { data: match } = await admin
+        .from("products")
+        .select("id, gtin")
+        .eq("profile_id", account.profile_id)
+        .or(ors.join(","))
+        .limit(1)
+        .maybeSingle();
+      matchId = match?.id ?? null;
+      if (matchId && gtin && !match?.gtin) {
+        await admin.from("products").update({ gtin }).eq("id", matchId);
+      }
+    }
+
+    if (matchId) {
+      // Existing product: keep its stock; push our truth to ML.
+      productId = matchId;
+      await admin.from("stock_push_queue").upsert(
+        {
+          product_id: productId,
+          status: "pending",
+          enqueued_at: new Date().toISOString(),
+          processed_at: null,
+          error: null,
+        },
+        { onConflict: "product_id" },
+      );
+    } else {
+      const { data: prod } = await admin
+        .from("products")
+        .insert({
+          profile_id: account.profile_id,
+          title: item.title,
+          image_url: item.thumbnail,
+          sku: sku ?? item.id, // default SKU = ML id; user can edit later
+          gtin,
+        })
+        .select("id")
+        .single();
+      productId = prod?.id ?? null;
+
+      // Seed stock once, from ML, only for the brand-new product. origin=ml so
+      // the trigger does NOT echo it back to ML.
+      if (productId && item.available_quantity > 0) {
+        await admin.from("stock_movements").insert({
+          profile_id: account.profile_id,
+          product_id: productId,
+          bucket: "on_hand",
+          delta: item.available_quantity,
+          reason: "initial_sync",
+          origin: "ml",
+          reference: item.id,
+          note: "Stock inicial importado de ML",
+        });
+      }
+    }
   }
 
   // Best-effort fee estimate.

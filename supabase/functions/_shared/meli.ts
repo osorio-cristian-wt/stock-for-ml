@@ -203,6 +203,10 @@ export interface MeliItem {
   status: string;
   permalink: string;
   thumbnail: string;
+  /** The seller's own SKU/code, when set on the listing. */
+  seller_custom_field?: string | null;
+  /** Item attributes; GTIN/SELLER_SKU live here. */
+  attributes?: { id: string; name?: string; value_name?: string | null }[];
   variations?: { id: number; price: number; available_quantity: number; attribute_combinations: unknown[] }[];
 }
 
