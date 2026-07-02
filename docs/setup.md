@@ -27,10 +27,23 @@ Tras `supabase start`, copiar el `anon key` y la `API URL` que imprime la CLI a
 
 ## 3. Variables de entorno
 
-### App (`apps/mobile/.env`)
+### App (`apps/mobile/.env.local` / `.env.prod`)
+
+Un archivo por entorno (plantilla: `apps/mobile/.env.example`; los reales no se
+commitean). Se inyectan con `--dart-define-from-file` vía el script
+`scripts/app.ps1`:
+
+```powershell
+.\scripts\app.ps1                            # flutter run · local · debug
+.\scripts\app.ps1 -Entorno prod              # flutter run · cloud · debug
+.\scripts\app.ps1 -Entorno prod -Accion apk  # APK release contra cloud
+.\scripts\app.ps1 -Accion appbundle          # AAB release · local
+.\scripts\app.ps1 -Entorno prod -SoloComando # imprime el comando sin ejecutar
 ```
-SUPABASE_URL=http://127.0.0.1:7431
-SUPABASE_ANON_KEY=<anon key local>
+
+```
+SUPABASE_URL=http://127.0.0.1:7431   # o https://<project-ref>.supabase.co
+SUPABASE_ANON_KEY=<publishable key>
 ```
 
 ### Edge Functions (secretos del backend)
