@@ -13,9 +13,69 @@ class InventoryRepository {
     return rows.map<Warehouse>((r) => Warehouse.fromJson(r)).toList();
   }
 
+  /// Realtime list of warehouses (default first, then by name).
+  Stream<List<Warehouse>> watchWarehouses() {
+    return _client
+        .from('warehouses')
+        .stream(primaryKey: ['id'])
+        .order('name')
+        .map((rows) {
+      final list = rows.map(Warehouse.fromJson).toList()
+        ..sort((a, b) {
+          if (a.isDefault != b.isDefault) return a.isDefault ? -1 : 1;
+          return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+        });
+      return list;
+    });
+  }
+
+  /// Lazily creates the "Depósito principal" for the user and returns its id.
+  Future<String> ensureDefaultWarehouse() async {
+    final id = await _client.rpc('ensure_default_warehouse_self');
+    return id as String;
+  }
+
   Future<Warehouse> createWarehouse(Warehouse w) async {
     final row = await _client.from('warehouses').insert(w.toInsert()).select().single();
     return Warehouse.fromJson(row);
+  }
+
+  /// Switches which warehouse is the default (dispatch) one.
+  Future<void> setDefaultWarehouse(String warehouseId) async {
+    await _client.rpc('set_default_warehouse', params: {'p_warehouse_id': warehouseId});
+  }
+
+  /// Toggles whether a warehouse counts toward the available published to ML.
+  Future<void> setSellable(String warehouseId, bool sellable) async {
+    await _client
+        .from('warehouses')
+        .update({'is_sellable': sellable}).eq('id', warehouseId);
+  }
+
+  /// Moves [qty] units of a product between two warehouses (internal control).
+  Future<void> transferStock({
+    required String productId,
+    required String fromWarehouseId,
+    required String toWarehouseId,
+    required int qty,
+    String? note,
+  }) async {
+    await _client.rpc('transfer_stock', params: {
+      'p_product_id': productId,
+      'p_from_warehouse': fromWarehouseId,
+      'p_to_warehouse': toWarehouseId,
+      'p_qty': qty,
+      'p_note': note,
+    });
+  }
+
+  /// Realtime per-warehouse stock buckets for a product.
+  Stream<List<ProductStock>> watchStockFor(String productId) {
+    return _client
+        .from('product_stock')
+        .stream(primaryKey: ['product_id', 'warehouse_id'])
+        .eq('product_id', productId)
+        .map((rows) => rows.map(ProductStock.fromJson).toList());
   }
 
   Future<List<ProductCategory>> categories() async {

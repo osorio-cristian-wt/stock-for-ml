@@ -26,6 +26,18 @@ class ProductsRepository {
     await _client.from('products').update({'purchase_cost': cost}).eq('id', productId);
   }
 
+  /// Updates the editable fields of an existing product (title, codes, cost,
+  /// threshold, etc). Stock is never edited here — it flows through the ledger.
+  Future<Product> update(Product product) async {
+    final row = await _client
+        .from('products')
+        .update(product.toInsert())
+        .eq('id', product.id)
+        .select()
+        .single();
+    return Product.fromJson(row);
+  }
+
   /// Barcode-first "already exists?" check: matches a scanned code against the
   /// global barcode (gtin) or the internal sku. Returns null if it's new.
   Future<Product?> findByCode(String code) async {
@@ -60,6 +72,30 @@ class ProductsRepository {
       'p_bucket': bucket.wire,
       'p_origin': origin.wire,
     });
+  }
+
+  /// Stock ledger entries for a product (newest first) — drives the per-product
+  /// history timeline together with sales.
+  Future<List<StockMovement>> movementsFor(String productId, {int limit = 100}) async {
+    final rows = await _client
+        .from('stock_movements')
+        .select()
+        .eq('product_id', productId)
+        .order('created_at', ascending: false)
+        .limit(limit);
+    return rows.map<StockMovement>((r) => StockMovement.fromJson(r)).toList();
+  }
+
+  /// Realtime version of [movementsFor] (newest first) — keeps the history
+  /// timeline live while it's on screen (e.g. a purchase closes elsewhere).
+  Stream<List<StockMovement>> watchMovementsFor(String productId, {int limit = 100}) {
+    return _client
+        .from('stock_movements')
+        .stream(primaryKey: ['id'])
+        .eq('product_id', productId)
+        .order('created_at')
+        .limit(limit)
+        .map((rows) => rows.map(StockMovement.fromJson).toList());
   }
 
   /// Realtime stream of products for live stock updates.
