@@ -362,8 +362,9 @@ en ML pausada para revisión. **Confirmar scopes OAuth con el dueño antes.**
 ## 6. Verificación y tests
 - Flutter: `cd apps/mobile && flutter analyze` (debe quedar limpio); `flutter test`.
 - core_models: `cd packages/core_models && dart test`.
-- Postgres: `supabase test db` (pgTAP) — agregar tests de `close_purchase`,
-  `transfer_stock`, `set_default_warehouse`.
+- Postgres: `supabase test db` (pgTAP) — `close_purchase`, `add_purchase_item`,
+  `transfer_stock` y `set_default_warehouse` cubiertos en
+  `supabase/tests/02_warehouses_purchases_test.sql`.
 - Deno: `deno test` en `supabase/functions/tests/` — `upsertItem` dedup, `parse-invoice`.
 - Commit por fase (mensaje convencional; co-author Claude). No pushear salvo pedido.
 
@@ -378,7 +379,8 @@ en ML pausada para revisión. **Confirmar scopes OAuth con el dueño antes.**
       (gestión + set principal + toggle vendible + alta); picker de depósito en
       `stock_adjustment_sheet.dart`; `transfer_sheet.dart`; desglose por depósito
       en `product_detail_screen.dart`; entrada en Ajustes → Inventario.
-      `flutter analyze` limpio. **Pendiente menor:** tests pgTAP de los RPCs.
+      `flutter analyze` limpio. Tests pgTAP de los RPCs en
+      `supabase/tests/02_warehouses_purchases_test.sql` (2026-07-02).
 - [x] Fase 3 — Compras + proveedores + histórico. Hecho: migración
       `20260619120003_purchases.sql` (tablas suppliers/purchases/purchase_items,
       RPCs `add_purchase_item` y `close_purchase`, RLS + realtime); modelos
@@ -389,11 +391,17 @@ en ML pausada para revisión. **Confirmar scopes OAuth con el dueño antes.**
       `purchases_screen.dart` (lista) + `purchase_edit_screen.dart` (proveedor,
       depósito, agregar por SKU buscando/escribiendo, qty+costo, cerrar→stock,
       descartar); historial por producto en `product_detail_screen.dart`.
-      `flutter analyze` limpio. **Pendientes menores:** (a) escáner en vivo
-      embebido para el alta por SKU (hoy se busca/escribe el SKU; se puede reusar
-      `mobile_scanner`/`ScanScreen`); (b) `productHistoryProvider` no auto-refresca
-      tras cerrar una compra estando abierta la pantalla (refetch al reabrir);
-      (c) test pgTAP de `close_purchase`.
+      `flutter analyze` limpio. Pendientes menores cerrados el 2026-07-02:
+      (a) escáner en vivo embebido para el alta por SKU — chrome del escáner
+      extraído a `features/scan/scanner_chrome.dart`, nueva
+      `features/scan/code_scanner_screen.dart` ("leer un código y volver") y
+      botón de cámara en el buscador de `purchase_edit_screen.dart` (match
+      exacto por SKU/GTIN → sheet de cantidad; sin match → queda cargado para
+      crear el producto); (b) el historial ahora es reactivo —
+      `ProductsRepository.watchMovementsFor` (realtime) +
+      `productMovementsProvider`, del que deriva `productHistoryProvider`;
+      (c) tests pgTAP de `add_purchase_item`/`close_purchase` en
+      `supabase/tests/02_warehouses_purchases_test.sql`.
 - [x] Fase 4 — Import ML sin duplicar. Hecho: `_shared/items.ts` `upsertItem`
       refinado (dedup por GTIN/SKU; si el producto ya existe → vincular + encolar
       push del stock local a ML; si es nuevo → crear + sembrar stock con
@@ -422,3 +430,10 @@ en ML pausada para revisión. **Confirmar scopes OAuth con el dueño antes.**
 
 > Al completar una fase: marcar el check, actualizar §4/§7 con lo realmente hecho y
 > cualquier desvío del plan, y dejar el `flutter analyze` limpio.
+
+**Estado al 2026-07-02:** todas las fases completas y pendientes menores
+cerrados (`flutter analyze` + `flutter test` + `supabase test db` en verde).
+Quedan solo dos ítems fuera de alcance por decisión: la UI de import selectivo
+de ML (opcional; el import masivo desde Ajustes ya cubre el caso) y **crear
+borrador en ML** (`publish-item`), bloqueado hasta confirmar con el dueño los
+scopes OAuth de escritura.
