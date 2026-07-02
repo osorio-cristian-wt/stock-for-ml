@@ -25,6 +25,7 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
   final _search = TextEditingController();
   _Filter _filter = _Filter.all;
   String _query = '';
+  String? _categoryFilter; // category id; null = all categories
 
   @override
   void dispose() {
@@ -36,6 +37,15 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
     Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => ProductDetailScreen(productId: p.id)),
     );
+  }
+
+  /// Pull-to-refresh: re-subscribes the live products stream and refetches the
+  /// FutureProvider-backed economics/categories (which don't stream).
+  Future<void> _refresh() async {
+    ref.invalidate(economicsProvider);
+    ref.invalidate(categoriesProvider);
+    ref.invalidate(productsStreamProvider);
+    await ref.read(economicsProvider.future);
   }
 
   Future<void> _openAdd() async {
@@ -59,6 +69,7 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
   Widget build(BuildContext context) {
     final productsAsync = ref.watch(productsStreamProvider);
     final economics = ref.watch(economicsByProductProvider);
+    final categories = ref.watch(categoriesProvider).valueOrNull ?? const [];
 
     return Scaffold(
       body: SafeArea(
@@ -88,7 +99,7 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
                 onChanged: (v) => setState(() => _query = v.trim().toLowerCase()),
                 style: const TextStyle(color: AppColors.textPrimary, fontSize: 14),
                 decoration: const InputDecoration(
-                  hintText: 'Buscar por título o SKU…',
+                  hintText: 'Buscar por título, SKU o marca…',
                   prefixIcon: Icon(Icons.search, color: AppColors.textFaint, size: 20),
                 ),
               ),
@@ -113,39 +124,60 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
                         total: products.length,
                         onChanged: (f) => setState(() => _filter = f),
                       ),
+                      if (categories.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        _CategoryFilterRow(
+                          categories: categories,
+                          selectedId: _categoryFilter,
+                          onChanged: (id) => setState(() => _categoryFilter = id),
+                        ),
+                      ],
                       const SizedBox(height: 14),
                       Expanded(
-                        child: filtered.isEmpty
-                            ? EmptyState(
-                                icon: Icons.inventory_2_outlined,
-                                title: products.isEmpty
-                                    ? 'Todavía no hay productos'
-                                    : 'Sin resultados',
-                                message: products.isEmpty
-                                    ? 'Escaneá un código o cargá tu primer producto.'
-                                    : 'Probá con otro término o filtro.',
-                                action: products.isEmpty
-                                    ? FilledButton.icon(
-                                        onPressed: _openAdd,
-                                        icon: const Icon(Icons.add),
-                                        label: const Text('Agregar producto'),
-                                      )
-                                    : null,
-                              )
-                            : ListView.separated(
-                                padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-                                itemCount: filtered.length,
-                                separatorBuilder: (_, __) => const SizedBox(height: 10),
-                                itemBuilder: (_, i) {
-                                  final p = filtered[i];
-                                  return ProductTile(
-                                    product: p,
-                                    economics: economics[p.id],
-                                    published: economics.containsKey(p.id),
-                                    onTap: () => _openProduct(p),
-                                  );
-                                },
-                              ),
+                        child: RefreshIndicator(
+                          color: AppColors.primary,
+                          backgroundColor: AppColors.surface,
+                          onRefresh: _refresh,
+                          child: filtered.isEmpty
+                              ? ListView(
+                                  physics: const AlwaysScrollableScrollPhysics(),
+                                  children: [
+                                    const SizedBox(height: 80),
+                                    EmptyState(
+                                      icon: Icons.inventory_2_outlined,
+                                      title: products.isEmpty
+                                          ? 'Todavía no hay productos'
+                                          : 'Sin resultados',
+                                      message: products.isEmpty
+                                          ? 'Escaneá un código o cargá tu primer producto.'
+                                          : 'Probá con otro término o filtro.',
+                                      action: products.isEmpty
+                                          ? FilledButton.icon(
+                                              onPressed: _openAdd,
+                                              icon: const Icon(Icons.add),
+                                              label: const Text('Agregar producto'),
+                                            )
+                                          : null,
+                                    ),
+                                  ],
+                                )
+                              : ListView.separated(
+                                  physics: const AlwaysScrollableScrollPhysics(),
+                                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+                                  itemCount: filtered.length,
+                                  separatorBuilder: (_, __) =>
+                                      const SizedBox(height: 10),
+                                  itemBuilder: (_, i) {
+                                    final p = filtered[i];
+                                    return ProductTile(
+                                      product: p,
+                                      economics: economics[p.id],
+                                      published: economics.containsKey(p.id),
+                                      onTap: () => _openProduct(p),
+                                    );
+                                  },
+                                ),
+                        ),
                       ),
                     ],
                   ),
@@ -172,9 +204,13 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
         case _Filter.all:
           break;
       }
+      if (_categoryFilter != null && p.categoryId != _categoryFilter) {
+        return false;
+      }
       if (_query.isEmpty) return true;
       return p.title.toLowerCase().contains(_query) ||
-          (p.sku?.toLowerCase().contains(_query) ?? false);
+          (p.sku?.toLowerCase().contains(_query) ?? false) ||
+          (p.brand?.toLowerCase().contains(_query) ?? false);
     }).toList();
   }
 }
@@ -215,6 +251,45 @@ class _FilterRow extends StatelessWidget {
             selected: filter == _Filter.internal,
             onTap: () => onChanged(_Filter.internal),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Horizontal chip row that filters the list by the user's internal categories.
+class _CategoryFilterRow extends StatelessWidget {
+  const _CategoryFilterRow({
+    required this.categories,
+    required this.selectedId,
+    required this.onChanged,
+  });
+
+  final List<ProductCategory> categories;
+  final String? selectedId;
+  final ValueChanged<String?> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 32,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        children: [
+          _Chip(
+            label: 'Todas',
+            selected: selectedId == null,
+            onTap: () => onChanged(null),
+          ),
+          for (final c in categories) ...[
+            const SizedBox(width: 7),
+            _Chip(
+              label: c.name,
+              selected: selectedId == c.id,
+              onTap: () => onChanged(c.id),
+            ),
+          ],
         ],
       ),
     );

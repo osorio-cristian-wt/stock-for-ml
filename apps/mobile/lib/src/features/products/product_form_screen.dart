@@ -42,14 +42,14 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
   late final TextEditingController _sku;
   late final TextEditingController _threshold;
   late final TextEditingController _cost;
+  late final TextEditingController _brand;
 
   String _currency = 'USD';
-  bool _linkMl = false;
   bool _busy = false;
+  bool _suggesting = false;
   String? _error;
   String? _gtin;
   String? _categoryId;
-  String? _brand;
   String? _imageUrl;
 
   @override
@@ -69,7 +69,7 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
     _currency = p?.purchaseCurrency ?? 'USD';
     _gtin = p?.gtin ?? widget.initialGtin;
     _categoryId = p?.categoryId ?? widget.initialCategoryId;
-    _brand = p?.brand ?? widget.initialBrand;
+    _brand = TextEditingController(text: p?.brand ?? widget.initialBrand ?? '');
     _imageUrl = p?.imageUrl ?? widget.initialImageUrl;
   }
 
@@ -79,6 +79,7 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
     _sku.dispose();
     _threshold.dispose();
     _cost.dispose();
+    _brand.dispose();
     super.dispose();
   }
 
@@ -101,6 +102,7 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
         ref.read(supabaseClientProvider).auth.currentUser?.id ?? '';
     final threshold = int.tryParse(_threshold.text.trim());
     final sku = _sku.text.trim().isEmpty ? null : _sku.text.trim();
+    final brand = _brand.text.trim().isEmpty ? null : _brand.text.trim();
 
     try {
       if (widget.isEdit) {
@@ -109,7 +111,7 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
           sku: sku,
           gtin: _gtin,
           categoryId: _categoryId,
-          brand: _brand,
+          brand: brand,
           purchaseCost: _costValue,
           purchaseCurrency: _currency,
           lowStockThreshold: threshold,
@@ -123,7 +125,7 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
           sku: sku,
           gtin: _gtin,
           categoryId: _categoryId,
-          brand: _brand,
+          brand: brand,
           purchaseCost: _costValue,
           purchaseCurrency: _currency,
           lowStockThreshold: threshold,
@@ -151,9 +153,114 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
     return s.length > 90 ? '${s.substring(0, 90)}…' : s;
   }
 
+  /// LLM last-fallback (§7.4): suggest category + brand from the title when the
+  /// catalog/predictor couldn't resolve it. The user always confirms/overrides.
+  Future<void> _suggest() async {
+    final title = _title.text.trim();
+    if (title.isEmpty) {
+      setState(() => _error = 'Ingresá un título para sugerir la categoría.');
+      return;
+    }
+    final categories = ref.read(categoriesProvider).valueOrNull ?? const [];
+    setState(() {
+      _suggesting = true;
+      _error = null;
+    });
+    try {
+      final res = await ref.read(catalogRepositoryProvider).classify(
+            title: title,
+            categorySlugs: categories.map((c) => c.slug).toList(),
+          );
+      final slug = res?['category_slug'] as String?;
+      final brand = (res?['brand'] as String?)?.trim();
+      ProductCategory? match;
+      for (final c in categories) {
+        if (c.slug == slug) {
+          match = c;
+          break;
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        if (match != null) _categoryId = match.id;
+        if (brand != null && brand.isNotEmpty && _brand.text.trim().isEmpty) {
+          _brand.text = brand;
+        }
+      });
+      if (mounted) {
+        final ok = match != null || (brand != null && brand.isNotEmpty);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(ok
+              ? 'Sugerencia aplicada — revisá y confirmá.'
+              : 'No se pudo clasificar automáticamente.'),
+        ));
+      }
+    } catch (e) {
+      if (mounted) setState(() => _error = 'No se pudo sugerir. ${_short(e)}');
+    } finally {
+      if (mounted) setState(() => _suggesting = false);
+    }
+  }
+
+  /// Inline creation so the user can build their taxonomy while loading a
+  /// product (supermarket-style), without leaving the form.
+  Future<void> _createCategory() async {
+    final controller = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: const Text('Nueva categoría',
+            style: TextStyle(color: AppColors.textPrimary)),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          style: const TextStyle(color: AppColors.textPrimary),
+          decoration: const InputDecoration(hintText: 'Ej. Auriculares'),
+          onSubmitted: (v) => Navigator.of(ctx).pop(v.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancelar', style: TextStyle(color: AppColors.textMuted)),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(controller.text.trim()),
+            child: const Text('Crear'),
+          ),
+        ],
+      ),
+    );
+    if (name == null || name.isEmpty || !mounted) return;
+    final slug = _slugify(name);
+    if (slug.isEmpty) {
+      setState(() => _error = 'Nombre de categoría inválido.');
+      return;
+    }
+    final userId = ref.read(supabaseClientProvider).auth.currentUser?.id ?? '';
+    try {
+      final created = await ref.read(inventoryRepositoryProvider).createCategory(
+            ProductCategory(id: '', profileId: userId, name: name, slug: slug),
+          );
+      ref.invalidate(categoriesProvider);
+      if (mounted) setState(() => _categoryId = created.id);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _error = 'No se pudo crear la categoría. ${_short(e)}');
+      }
+    }
+  }
+
+  String _slugify(String s) => s
+      .toLowerCase()
+      .trim()
+      .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
+      .replaceAll(RegExp(r'^-+|-+$'), '');
+
   @override
   Widget build(BuildContext context) {
     final fx = ref.watch(fxProvider).valueOrNull;
+    final mlConnected = ref.watch(mlAccountProvider).valueOrNull != null;
     return Scaffold(
       appBar: AppBar(
         leading: TextButton(
@@ -205,6 +312,22 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
             ],
           ),
           const SizedBox(height: 13),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(child: _Field(label: 'Marca', controller: _brand, hint: 'Genérica')),
+              const SizedBox(width: 11),
+              _SuggestButton(busy: _suggesting, onTap: _suggesting ? null : _suggest),
+            ],
+          ),
+          const SizedBox(height: 13),
+          _CategoryField(
+            categories: ref.watch(categoriesProvider).valueOrNull ?? const [],
+            selectedId: _categoryId,
+            onChanged: (id) => setState(() => _categoryId = id),
+            onCreate: _createCategory,
+          ),
+          const SizedBox(height: 13),
           _CostField(
             controller: _cost,
             currency: _currency,
@@ -212,11 +335,10 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
             fxRate: fx?.rate,
             costValue: _costValue,
           ),
-          const SizedBox(height: 16),
-          _LinkMlToggle(
-            value: _linkMl,
-            onChanged: (v) => setState(() => _linkMl = v),
-          ),
+          if (mlConnected) ...[
+            const SizedBox(height: 16),
+            const _LinkMlHint(),
+          ],
           if (_error != null) ...[
             const SizedBox(height: 16),
             Text(_error!, style: const TextStyle(color: AppColors.danger, fontSize: 13)),
@@ -383,35 +505,141 @@ class _CurrencyToggle extends StatelessWidget {
   }
 }
 
-class _LinkMlToggle extends StatelessWidget {
-  const _LinkMlToggle({required this.value, required this.onChanged});
-
-  final bool value;
-  final ValueChanged<bool> onChanged;
+/// After creating the product, the user links an ML publication from the
+/// product detail screen ("Vincular publicación de ML"). This just signposts it.
+class _LinkMlHint extends StatelessWidget {
+  const _LinkMlHint();
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AppColors.border),
       ),
-      child: Row(
+      child: const Row(
         children: [
-          const Expanded(
-            child: Text('Vincular a publicación de ML',
-                style: TextStyle(fontSize: 13, color: AppColors.textBody)),
-          ),
-          Switch(
-            value: value,
-            onChanged: onChanged,
-            activeColor: AppColors.onPrimary,
-            activeTrackColor: AppColors.primary,
+          Icon(Icons.link_rounded, size: 18, color: AppColors.textMuted),
+          SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Después de crear el producto vas a poder vincularlo a una '
+              'publicación de ML desde su detalle.',
+              style: TextStyle(fontSize: 12, color: AppColors.textMuted, height: 1.4),
+            ),
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Triggers the LLM classification fallback from the title.
+class _SuggestButton extends StatelessWidget {
+  const _SuggestButton({required this.busy, required this.onTap});
+
+  final bool busy;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      // Aligns with the field below its label.
+      padding: const EdgeInsets.only(top: 22),
+      child: OutlinedButton.icon(
+        onPressed: onTap,
+        icon: busy
+            ? const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primary),
+              )
+            : const Icon(Icons.auto_awesome_outlined, size: 16),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: AppColors.primary,
+          side: const BorderSide(color: AppColors.border),
+          minimumSize: const Size(0, 48),
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+        ),
+        label: const Text('Sugerir'),
+      ),
+    );
+  }
+}
+
+/// Category picker fed by the user's taxonomy. "Sin categoría" clears it.
+class _CategoryField extends StatelessWidget {
+  const _CategoryField({
+    required this.categories,
+    required this.selectedId,
+    required this.onChanged,
+    required this.onCreate,
+  });
+
+  final List<ProductCategory> categories;
+  final String? selectedId;
+  final ValueChanged<String?> onChanged;
+  final VoidCallback onCreate;
+
+  @override
+  Widget build(BuildContext context) {
+    // Guard against a stale id (e.g. an AI-suggested category not yet loaded).
+    final value =
+        categories.any((c) => c.id == selectedId) ? selectedId : null;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(bottom: 6, left: 2),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('Categoría',
+                  style: TextStyle(
+                      fontSize: 12,
+                      color: AppColors.textMuted,
+                      fontWeight: FontWeight.w500)),
+              GestureDetector(
+                onTap: onCreate,
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.add, size: 14, color: AppColors.primary),
+                    SizedBox(width: 2),
+                    Text('Nueva',
+                        style: TextStyle(
+                            fontSize: 12,
+                            color: AppColors.primary,
+                            fontWeight: FontWeight.w600)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        DropdownButtonFormField<String?>(
+          value: value,
+          isExpanded: true,
+          dropdownColor: AppColors.surface,
+          style: const TextStyle(color: AppColors.textPrimary, fontSize: 14),
+          icon: const Icon(Icons.expand_more, color: AppColors.textFaint),
+          decoration: InputDecoration(
+            hintText: categories.isEmpty ? 'Sin categorías aún' : 'Sin categoría',
+          ),
+          items: [
+            const DropdownMenuItem<String?>(
+              value: null,
+              child: Text('Sin categoría',
+                  style: TextStyle(color: AppColors.textMuted)),
+            ),
+            for (final c in categories)
+              DropdownMenuItem<String?>(value: c.id, child: Text(c.name)),
+          ],
+          onChanged: categories.isEmpty ? null : onChanged,
+        ),
+      ],
     );
   }
 }
