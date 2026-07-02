@@ -8,6 +8,7 @@ import 'economics_repository.dart';
 import 'inventory_repository.dart';
 import 'price_comparison_repository.dart';
 import 'products_repository.dart';
+import 'purchases_repository.dart';
 import 'sales_repository.dart';
 
 /// The shared Supabase client (initialized in main()).
@@ -55,4 +56,12 @@ final connectionRepositoryProvider = Provider<ConnectionRepository>((ref) {
 final priceComparisonRepositoryProvider =
     Provider<PriceComparisonRepository>((ref) {
   return PriceComparisonRepository(ref.watch(supabaseClientProvider));
+});
+
+final purchasesRepositoryProvider = Provider<PurchasesRepository>((ref) {
+  return PurchasesRepository(ref.watch(supabaseClientProvider));
+});
+
+final suppliersRepositoryProvider = Provider<SuppliersRepository>((ref) {
+  return SuppliersRepository(ref.watch(supabaseClientProvider));
 });

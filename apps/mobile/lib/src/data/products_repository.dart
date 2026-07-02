@@ -74,6 +74,18 @@ class ProductsRepository {
     });
   }
 
+  /// Stock ledger entries for a product (newest first) — drives the per-product
+  /// history timeline together with sales.
+  Future<List<StockMovement>> movementsFor(String productId, {int limit = 100}) async {
+    final rows = await _client
+        .from('stock_movements')
+        .select()
+        .eq('product_id', productId)
+        .order('created_at', ascending: false)
+        .limit(limit);
+    return rows.map<StockMovement>((r) => StockMovement.fromJson(r)).toList();
+  }
+
   /// Realtime stream of products for live stock updates.
   Stream<List<Product>> watchAll() {
     return _client

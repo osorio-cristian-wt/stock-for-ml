@@ -6,6 +6,7 @@ import '../../theme/app_colors.dart';
 import '../alerts/alerts_screen.dart';
 import '../home/home_screen.dart';
 import '../products/products_screen.dart';
+import '../purchases/purchases_screen.dart';
 import '../sales/sales_screen.dart';
 import '../settings/settings_screen.dart';
 
@@ -36,6 +37,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
     final tabs = [
       HomeScreen(onSeeAllLowStock: () => _goToTab(1), onOpenAlerts: _openAlerts),
       const ProductsScreen(),
+      const PurchasesScreen(),
       const SalesScreen(),
       const SettingsScreen(),
     ];
@@ -88,16 +90,22 @@ class _BottomNav extends StatelessWidget {
                 onTap: () => onTap(1),
               ),
               _NavItem(
-                icon: Icons.bar_chart_rounded,
-                label: 'Ventas',
+                icon: Icons.receipt_long_rounded,
+                label: 'Compras',
                 selected: index == 2,
                 onTap: () => onTap(2),
               ),
               _NavItem(
-                icon: Icons.settings_rounded,
-                label: 'Ajustes',
+                icon: Icons.bar_chart_rounded,
+                label: 'Ventas',
                 selected: index == 3,
                 onTap: () => onTap(3),
+              ),
+              _NavItem(
+                icon: Icons.settings_rounded,
+                label: 'Ajustes',
+                selected: index == 4,
+                onTap: () => onTap(4),
               ),
             ],
           ),
