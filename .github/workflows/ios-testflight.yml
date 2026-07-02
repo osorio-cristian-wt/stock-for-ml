@@ -1,11 +1,15 @@
 name: iOS · TestFlight
 
 # Deploys the iOS app to TestFlight.
-# Trigger manually (workflow_dispatch) or by pushing a tag like v0.1.0.
+# - push to `staging`  -> build tagged/distributed to the "Staging" TestFlight group.
+# - push to `production` -> build distributed to the default (production) group.
+# - `develop` is intentionally NOT wired here: it only runs the CI checks (ci.yml).
+# Also triggerable manually (workflow_dispatch) or by pushing a tag like v0.1.0.
 on:
   workflow_dispatch:
   push:
     tags: ["v*"]
+    branches: [production, staging]
 
 jobs:
   testflight:
@@ -49,9 +53,18 @@ jobs:
           bundler-cache: true
           working-directory: apps/mobile/ios
 
+      - name: Resolve TestFlight group from branch
+        id: env
+        run: |
+          if [ "${{ github.ref_name }}" = "staging" ]; then
+            echo "groups=Staging" >> "$GITHUB_OUTPUT"
+          else
+            echo "groups=" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: fastlane beta (build + upload)
         working-directory: apps/mobile/ios
-        run: bundle exec fastlane beta
+        run: bundle exec fastlane beta groups:"${{ steps.env.outputs.groups }}"
         env:
           # Use the GitHub run number as the TestFlight build number.
           BUILD_NUMBER: ${{ github.run_number }}
