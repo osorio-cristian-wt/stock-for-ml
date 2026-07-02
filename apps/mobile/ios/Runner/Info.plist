@@ -46,7 +46,9 @@
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>Usamos la cámara para escanear códigos de barras de tus productos.</string>
+	<string>Usamos la cámara para escanear códigos de barras y fotografiar facturas de compra.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Usamos tus fotos para leer facturas de compra que ya tengas guardadas.</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
