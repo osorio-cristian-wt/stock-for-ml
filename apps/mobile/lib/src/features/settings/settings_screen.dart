@@ -9,6 +9,7 @@ import '../../ui/format.dart';
 import '../../ui/widgets/app_widgets.dart';
 import '../auth/auth_controller.dart';
 import '../connect_ml/connect_ml_screen.dart';
+import '../warehouses/warehouses_screen.dart';
 
 /// 4th tab · Ajustes. Account, MercadoLibre connection, FX and sign out.
 class SettingsScreen extends ConsumerWidget {
@@ -131,6 +132,68 @@ class SettingsScreen extends ConsumerWidget {
                           : 'Conectar con Mercado Libre'),
                     ),
                   ),
+                  if (account != null) ...[
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed: () async {
+                          final messenger = ScaffoldMessenger.of(context);
+                          messenger.showSnackBar(const SnackBar(
+                              content: Text('Importando publicaciones de ML…')));
+                          try {
+                            await ref
+                                .read(connectionRepositoryProvider)
+                                .triggerInitialSync();
+                            ref.invalidate(productsStreamProvider);
+                            ref.invalidate(economicsProvider);
+                            messenger.showSnackBar(const SnackBar(
+                                content: Text('Importación iniciada. Tus '
+                                    'productos se irán actualizando.')));
+                          } catch (e) {
+                            messenger.showSnackBar(
+                                SnackBar(content: Text('No se pudo importar. $e')));
+                          }
+                        },
+                        icon: const Icon(Icons.download_rounded, size: 18),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: AppColors.surfaceDeep,
+                          foregroundColor: AppColors.textPrimary,
+                          minimumSize: const Size.fromHeight(46),
+                        ),
+                        label: const Text('Importar publicaciones'),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(height: 18),
+            const SectionHeader('Inventario', uppercase: true),
+            const SizedBox(height: 10),
+            SurfaceCard(
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const WarehousesScreen()),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.warehouse_outlined, color: AppColors.primary),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Depósitos',
+                            style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.textPrimary)),
+                        Text('Principal de despacho, depósitos vendibles y transferencias',
+                            style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
+                      ],
+                    ),
+                  ),
+                  const Icon(Icons.chevron_right, color: AppColors.textFaint),
                 ],
               ),
             ),
@@ -163,6 +226,20 @@ class SettingsScreen extends ConsumerWidget {
                         Text('actualizado ${Fmt.ago(fx!.fetchedAt)}',
                             style: const TextStyle(fontSize: 10, color: AppColors.textMuted)),
                     ],
+                  ),
+                  IconButton(
+                    tooltip: 'Actualizar cotización',
+                    icon: const Icon(Icons.refresh_rounded,
+                        size: 20, color: AppColors.textMuted),
+                    onPressed: () async {
+                      try {
+                        await ref.read(economicsRepositoryProvider).refreshFx();
+                      } catch (_) {
+                        // Keep the last known value; the refresh just failed.
+                      }
+                      ref.invalidate(fxProvider);
+                      ref.invalidate(dashboardProvider);
+                    },
                   ),
                 ],
               ),
