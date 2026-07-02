@@ -1,5 +1,6 @@
-// POST /fx-rates  (cron, service-role)
-// Fetches the current USD->ARS rate and caches it in public.fx_rates.
+// POST /fx-rates  (cron + on-demand from the app)
+// Fetches the current USD->ARS rate and caches it in public.fx_rates,
+// returning the freshly cached row so the client can use it directly.
 // Default provider: dolarapi.com (blue). Override with FX_PROVIDER_URL.
 import { handlePreflight, jsonResponse } from "../_shared/cors.ts";
 import { optionalEnv } from "../_shared/env.ts";
@@ -21,18 +22,22 @@ Deno.serve(async (req) => {
     if (!rate) throw new Error("FX provider returned no rate");
 
     const admin = createAdminClient();
-    const { error } = await admin.from("fx_rates").insert({
-      base_currency: "USD",
-      quote_currency: "ARS",
-      kind: mapCasaToKind(data.casa),
-      buy: data.compra ?? null,
-      sell: data.venta ?? null,
-      rate,
-      source: providerUrl,
-    });
+    const { data: row, error } = await admin
+      .from("fx_rates")
+      .insert({
+        base_currency: "USD",
+        quote_currency: "ARS",
+        kind: mapCasaToKind(data.casa),
+        buy: data.compra ?? null,
+        sell: data.venta ?? null,
+        rate,
+        source: providerUrl,
+      })
+      .select()
+      .single();
     if (error) throw new Error(error.message);
 
-    return jsonResponse({ ok: true, kind: mapCasaToKind(data.casa), rate });
+    return jsonResponse({ ok: true, fx: row });
   } catch (e) {
     return jsonResponse({ error: String(e instanceof Error ? e.message : e) }, 500);
   }
