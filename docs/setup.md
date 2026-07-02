@@ -58,6 +58,9 @@ supabase secrets set ML_CLIENT_ID=... ML_CLIENT_SECRET=... ML_REDIRECT_URI=...
 
 ## 5. 🔑 Configurar la app de MercadoLibre
 
+> Paso a paso completo (crear la app, cargar credenciales en local y en cloud,
+> límites del OAuth en local): [guia-tecnica-ml-app.md](guia-tecnica-ml-app.md).
+
 1. Crear la aplicación en https://developers.mercadolibre.com.ar.
 2. Scopes: `read`, `write`, `offline_access`.
 3. `Redirect URI`: la URL pública de la Edge Function `oauth-callback`.
