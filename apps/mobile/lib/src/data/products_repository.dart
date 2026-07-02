@@ -86,6 +86,18 @@ class ProductsRepository {
     return rows.map<StockMovement>((r) => StockMovement.fromJson(r)).toList();
   }
 
+  /// Realtime version of [movementsFor] (newest first) — keeps the history
+  /// timeline live while it's on screen (e.g. a purchase closes elsewhere).
+  Stream<List<StockMovement>> watchMovementsFor(String productId, {int limit = 100}) {
+    return _client
+        .from('stock_movements')
+        .stream(primaryKey: ['id'])
+        .eq('product_id', productId)
+        .order('created_at')
+        .limit(limit)
+        .map((rows) => rows.map(StockMovement.fromJson).toList());
+  }
+
   /// Realtime stream of products for live stock updates.
   Stream<List<Product>> watchAll() {
     return _client

@@ -95,10 +95,17 @@ class ProductHistoryEntry {
   final String? reference;
 }
 
+/// Live stock ledger for one product; feeding the history from the realtime
+/// stream keeps the timeline current when a purchase closes or stock moves
+/// while the detail screen is open.
+final productMovementsProvider =
+    StreamProvider.family<List<StockMovement>, String>((ref, productId) {
+  return ref.watch(productsRepositoryProvider).watchMovementsFor(productId);
+});
+
 final productHistoryProvider =
     FutureProvider.family<List<ProductHistoryEntry>, String>((ref, productId) async {
-  final movements =
-      await ref.watch(productsRepositoryProvider).movementsFor(productId);
+  final movements = await ref.watch(productMovementsProvider(productId).future);
   final sales = (await ref.watch(salesRepositoryProvider).recent(limit: 200))
       .where((s) => s.productId == productId)
       .toList();
