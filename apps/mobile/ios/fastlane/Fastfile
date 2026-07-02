@@ -4,7 +4,9 @@ APP_ID = "com.stockforml.app"
 
 platform :ios do
   desc "Build the app and upload it to TestFlight"
-  lane :beta do
+  # groups: optional TestFlight beta group name (e.g. "Staging"). Omit/empty
+  # for the default (production) distribution.
+  lane :beta do |options|
     # Creates a temporary keychain on CI runners.
     setup_ci
 
@@ -42,9 +44,11 @@ platform :ios do
       }
     )
 
+    groups = options[:groups].to_s.strip
     upload_to_testflight(
       api_key: api_key,
-      skip_waiting_for_build_processing: true
+      skip_waiting_for_build_processing: true,
+      groups: groups.empty? ? nil : [groups]
     )
   end
 end
