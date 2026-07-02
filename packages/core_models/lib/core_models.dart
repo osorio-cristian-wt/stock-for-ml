@@ -11,6 +11,8 @@ export 'src/fx_rate.dart';
 export 'src/ml_listing.dart';
 export 'src/product.dart';
 export 'src/product_category.dart';
+export 'src/purchase.dart';
 export 'src/sale.dart';
 export 'src/stock_movement.dart';
+export 'src/supplier.dart';
 export 'src/warehouse.dart';
