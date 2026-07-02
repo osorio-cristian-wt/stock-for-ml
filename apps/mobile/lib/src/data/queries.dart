@@ -24,9 +24,11 @@ final economicsByProductProvider =
   };
 });
 
-/// Latest USD→ARS FX rate (blue dollar by default).
+/// Current USD→ARS FX rate (blue dollar by default). Reads the Supabase cache
+/// and refreshes it from the live API (via the `fx-rates` Edge Function) when
+/// the cached value is missing, seeded or stale.
 final fxProvider = FutureProvider<FxRate?>((ref) {
-  return ref.watch(economicsRepositoryProvider).latestFx();
+  return ref.watch(economicsRepositoryProvider).currentFx();
 });
 
 /// Recent sales (newest first).
@@ -37,6 +39,106 @@ final salesProvider = FutureProvider<List<Sale>>((ref) {
 /// Recent alerts (newest first).
 final alertsProvider = FutureProvider<List<AppAlert>>((ref) {
   return ref.watch(alertsRepositoryProvider).recent();
+});
+
+/// The user's internal product categories (their taxonomy) — drives the
+/// category filter in the list and the picker/AI suggestion in the form.
+final categoriesProvider = FutureProvider<List<ProductCategory>>((ref) {
+  return ref.watch(inventoryRepositoryProvider).categories();
+});
+
+/// Live list of warehouses (default/dispatch first, then by name).
+final warehousesStreamProvider = StreamProvider<List<Warehouse>>((ref) {
+  return ref.watch(inventoryRepositoryProvider).watchWarehouses();
+});
+
+/// Per-(product, warehouse) stock buckets for a product, realtime.
+final stockByWarehouseProvider =
+    StreamProvider.family<List<ProductStock>, String>((ref, productId) {
+  return ref.watch(inventoryRepositoryProvider).watchStockFor(productId);
+});
+
+/// Live list of purchases (newest first).
+final purchasesStreamProvider = StreamProvider<List<Purchase>>((ref) {
+  return ref.watch(purchasesRepositoryProvider).watchAll();
+});
+
+/// Live lines of a single purchase (drives the edit screen).
+final purchaseItemsProvider =
+    StreamProvider.family<List<PurchaseItem>, String>((ref, purchaseId) {
+  return ref.watch(purchasesRepositoryProvider).watchItems(purchaseId);
+});
+
+/// The user's suppliers (for the purchase header picker).
+final suppliersProvider = FutureProvider<List<Supplier>>((ref) {
+  return ref.watch(suppliersRepositoryProvider).all();
+});
+
+/// A single product's history: purchases, adjustments, transfers and ML sales,
+/// merged into one newest-first timeline. ML-origin ledger entries are omitted
+/// because the sale itself already represents them.
+enum HistoryKind { sale, purchase, adjustment, transfer, returned, initial, other }
+
+class ProductHistoryEntry {
+  const ProductHistoryEntry({
+    required this.date,
+    required this.kind,
+    required this.label,
+    required this.signedQty,
+    this.reference,
+  });
+
+  final DateTime? date;
+  final HistoryKind kind;
+  final String label;
+  final int signedQty; // + into stock, − out of stock
+  final String? reference;
+}
+
+final productHistoryProvider =
+    FutureProvider.family<List<ProductHistoryEntry>, String>((ref, productId) async {
+  final movements =
+      await ref.watch(productsRepositoryProvider).movementsFor(productId);
+  final sales = (await ref.watch(salesRepositoryProvider).recent(limit: 200))
+      .where((s) => s.productId == productId)
+      .toList();
+
+  final entries = <ProductHistoryEntry>[
+    for (final s in sales)
+      ProductHistoryEntry(
+        date: s.soldAt,
+        kind: HistoryKind.sale,
+        label: 'Venta ML',
+        signedQty: -s.quantity,
+        reference: s.mlOrderId,
+      ),
+  ];
+
+  for (final m in movements) {
+    if (m.origin == StockOrigin.ml) continue; // represented by the sale itself
+    final (kind, label) = switch (m.reason) {
+      StockReason.purchase ||
+      StockReason.purchaseReceived =>
+        (HistoryKind.purchase, 'Compra'),
+      StockReason.adjustment => (HistoryKind.adjustment, 'Ajuste'),
+      StockReason.transfer => (HistoryKind.transfer, 'Transferencia'),
+      StockReason.returned => (HistoryKind.returned, 'Devolución'),
+      StockReason.initialSync => (HistoryKind.initial, 'Stock inicial'),
+      StockReason.loss => (HistoryKind.other, 'Pérdida'),
+      _ => (HistoryKind.other, 'Movimiento'),
+    };
+    entries.add(ProductHistoryEntry(
+      date: m.createdAt,
+      kind: kind,
+      label: label,
+      signedQty: m.delta,
+      reference: m.reference,
+    ));
+  }
+
+  entries.sort((a, b) =>
+      (b.date ?? DateTime(1970)).compareTo(a.date ?? DateTime(1970)));
+  return entries;
 });
 
 /// Unread alert count for the header bell badge.
@@ -87,7 +189,7 @@ final dashboardProvider = FutureProvider<DashboardData>((ref) async {
   final products = await productsRepo.fetchAll();
   final economics = await economicsRepo.fetchAll();
   final sales = await salesRepo.recent(limit: 120);
-  final fx = await economicsRepo.latestFx();
+  final fx = await economicsRepo.currentFx();
 
   final now = DateTime.now();
   bool isToday(DateTime? d) =>

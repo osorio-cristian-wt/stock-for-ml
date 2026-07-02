@@ -50,6 +50,14 @@ abstract final class Fmt {
         '${when.month.toString().padLeft(2, '0')}';
   }
 
+  /// "12/03" day/month for history rows.
+  static String shortDate(DateTime? when) {
+    if (when == null) return '—';
+    final l = when.toLocal();
+    return '${l.day.toString().padLeft(2, '0')}/'
+        '${l.month.toString().padLeft(2, '0')}';
+  }
+
   /// "14:20" clock for sale rows.
   static String clock(DateTime? when) {
     if (when == null) return '';
