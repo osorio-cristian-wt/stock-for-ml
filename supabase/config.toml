@@ -389,3 +389,13 @@ s3_region = "env(S3_REGION)"
 s3_access_key = "env(S3_ACCESS_KEY)"
 # Configures AWS_SECRET_ACCESS_KEY for S3 bucket
 s3_secret_key = "env(S3_SECRET_KEY)"
+
+# Funciones públicas: las llama MercadoLibre (redirect del navegador y
+# webhooks), llegan sin JWT de Supabase — el gateway no debe exigirlo.
+# Validación propia: oauth-callback consume el state de PKCE; ml-webhook
+# solo encola en ml_events (el matching por cuenta ocurre en process-events).
+[functions.oauth-callback]
+verify_jwt = false
+
+[functions.ml-webhook]
+verify_jwt = false
