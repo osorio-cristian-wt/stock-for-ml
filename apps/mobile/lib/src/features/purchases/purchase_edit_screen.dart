@@ -12,6 +12,7 @@ import '../../theme/app_colors.dart';
 import '../../ui/format.dart';
 import '../../ui/widgets/app_widgets.dart';
 import '../products/product_form_screen.dart';
+import '../scan/code_scanner_screen.dart';
 
 /// Load / review a purchase. Drafts are editable (choose supplier + warehouse,
 /// scan/search products by SKU, set quantities); closing posts the stock.
@@ -536,6 +537,26 @@ class _AddItemSheetState extends ConsumerState<_AddItemSheet> {
     }
   }
 
+  /// Live camera scan: an exact SKU/GTIN match jumps straight to the qty
+  /// sheet; otherwise the code lands in the search box (create from there).
+  Future<void> _scanCode() async {
+    final code = await CodeScannerScreen.scan(
+      context,
+      title: 'Escanear producto',
+      subtitle: 'Se busca por SKU o código de barras entre tus productos.',
+    );
+    if (code == null || code.isEmpty || !mounted) return;
+    _search.text = code;
+    setState(() => _query = code);
+    final all = ref.read(productsStreamProvider).valueOrNull ?? const <Product>[];
+    final key = code.toLowerCase();
+    final exact = [
+      for (final p in all)
+        if (p.sku?.toLowerCase() == key || p.gtin?.toLowerCase() == key) p,
+    ];
+    if (exact.length == 1) await _pick(exact.first);
+  }
+
   @override
   Widget build(BuildContext context) {
     final all = ref.watch(productsStreamProvider).valueOrNull ?? const <Product>[];
@@ -575,10 +596,16 @@ class _AddItemSheetState extends ConsumerState<_AddItemSheet> {
                 autofocus: true,
                 onChanged: (v) => setState(() => _query = v.trim()),
                 style: const TextStyle(color: AppColors.textPrimary, fontSize: 14),
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   hintText: 'Escaneá o escribí el SKU / título…',
                   prefixIcon:
-                      Icon(Icons.search, color: AppColors.textFaint, size: 20),
+                      const Icon(Icons.search, color: AppColors.textFaint, size: 20),
+                  suffixIcon: IconButton(
+                    tooltip: 'Escanear con la cámara',
+                    icon: const Icon(Icons.qr_code_scanner_rounded,
+                        color: AppColors.primary, size: 20),
+                    onPressed: _scanCode,
+                  ),
                 ),
               ),
               const SizedBox(height: 12),
