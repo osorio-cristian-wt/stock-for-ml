@@ -2,10 +2,9 @@
 // Compares one of the seller's published listings against the competition
 // inside ML (a must-have of the MVP). The app never calls ML directly; this
 // function resolves a valid token server-side and runs the public search.
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { handlePreflight, jsonResponse } from "../_shared/cors.ts";
-import { mlConfig, supabaseConfig } from "../_shared/env.ts";
-import { createAdminClient } from "../_shared/supabaseAdmin.ts";
+import { mlConfig } from "../_shared/env.ts";
+import { createAdminClient, getUserFromJwt } from "../_shared/supabaseAdmin.ts";
 import { MeliClient } from "../_shared/meli.ts";
 import { getValidAccessToken } from "../_shared/credentials.ts";
 import { buildComparison, ListingInfo } from "../_shared/comparison.ts";
@@ -19,11 +18,9 @@ Deno.serve(async (req) => {
     const jwt = (req.headers.get("Authorization") ?? "").replace("Bearer ", "");
     if (!jwt) return jsonResponse({ error: "missing bearer token" }, 401);
 
-    const { url } = supabaseConfig();
-    const anon = createClient(url, jwt, { auth: { persistSession: false } });
-    const { data: userData, error: userErr } = await anon.auth.getUser(jwt);
-    if (userErr || !userData?.user) return jsonResponse({ error: "invalid token" }, 401);
-    const profileId = userData.user.id;
+    const user = await getUserFromJwt(jwt);
+    if (!user) return jsonResponse({ error: "invalid token" }, 401);
+    const profileId = user.id;
 
     const body = await req.json().catch(() => ({})) as {
       listing_id?: string;

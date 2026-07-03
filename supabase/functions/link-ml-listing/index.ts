@@ -3,10 +3,9 @@
 // Read-only ML access (GET /items) — no write scope required. The listing's
 // title stays independent from the product's stock title. Body:
 //   { product_id, ml_item_id }
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { handlePreflight, jsonResponse } from "../_shared/cors.ts";
-import { mlConfig, supabaseConfig } from "../_shared/env.ts";
-import { createAdminClient } from "../_shared/supabaseAdmin.ts";
+import { mlConfig } from "../_shared/env.ts";
+import { createAdminClient, getUserFromJwt } from "../_shared/supabaseAdmin.ts";
 import { MeliClient } from "../_shared/meli.ts";
 import { getValidAccessToken } from "../_shared/credentials.ts";
 import { upsertItem } from "../_shared/items.ts";
@@ -20,11 +19,15 @@ Deno.serve(async (req) => {
   try {
     const jwt = (req.headers.get("Authorization") ?? "").replace("Bearer ", "");
     if (!jwt) return jsonResponse({ error: "missing bearer token" }, 401);
-    const { url } = supabaseConfig();
-    const anon = createClient(url, jwt, { auth: { persistSession: false } });
-    const { data: userData, error: userErr } = await anon.auth.getUser(jwt);
-    if (userErr || !userData?.user) return jsonResponse({ error: "invalid token" }, 401);
-    const userId = userData.user.id;
+    const user = await getUserFromJwt(jwt);
+    if (!user) return jsonResponse({ error: "invalid token" }, 401);
+    const userId = user.id;
+
+    const { url, serviceRoleKey } = supabaseConfig();
+    const anon = createClient(url, serviceRoleKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+      global: { headers: { Authorization: `Bearer ${jwt}` } },
+    });
 
     const body = await req.json().catch(() => ({})) as {
       product_id?: string;

@@ -3,9 +3,9 @@
 // line items { supplier, date, currency, items[] } for the user to APPROVE in
 // the app before a purchase is created. Uses Claude Haiku 4.5 (vision + JSON
 // schema). Same Anthropic raw-HTTP pattern as classify-product.
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { handlePreflight, jsonResponse } from "../_shared/cors.ts";
-import { anthropicConfig, supabaseConfig } from "../_shared/env.ts";
+import { anthropicConfig } from "../_shared/env.ts";
+import { getUserFromJwt } from "../_shared/supabaseAdmin.ts";
 
 interface ParseInvoiceRequest {
   image_base64?: string;
@@ -23,10 +23,8 @@ Deno.serve(async (req) => {
     // Authenticated app user only (this calls a paid API behind the backend).
     const jwt = (req.headers.get("Authorization") ?? "").replace("Bearer ", "");
     if (!jwt) return jsonResponse({ error: "missing bearer token" }, 401);
-    const { url } = supabaseConfig();
-    const anon = createClient(url, jwt, { auth: { persistSession: false } });
-    const { data: userData, error: userErr } = await anon.auth.getUser(jwt);
-    if (userErr || !userData?.user) return jsonResponse({ error: "invalid token" }, 401);
+    const user = await getUserFromJwt(jwt);
+    if (!user) return jsonResponse({ error: "invalid token" }, 401);
 
     const body = await req.json().catch(() => ({})) as ParseInvoiceRequest;
     const image = (body.image_base64 ?? "").trim();

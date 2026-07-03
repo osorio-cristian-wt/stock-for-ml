@@ -1,9 +1,8 @@
 // GET /oauth-url  (Authorization: Bearer <app user JWT>)
 // Returns the ML authorization URL and persists the PKCE state for callback.
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { handlePreflight, jsonResponse } from "../_shared/cors.ts";
-import { mlConfig, supabaseConfig } from "../_shared/env.ts";
-import { createAdminClient } from "../_shared/supabaseAdmin.ts";
+import { mlConfig } from "../_shared/env.ts";
+import { createAdminClient, getUserFromJwt } from "../_shared/supabaseAdmin.ts";
 import { buildAuthorizeUrl } from "../_shared/meli.ts";
 import { generatePkce, randomString } from "../_shared/pkce.ts";
 
@@ -17,10 +16,8 @@ Deno.serve(async (req) => {
     if (!jwt) return jsonResponse({ error: "missing bearer token" }, 401);
 
     // Resolve the app user from their JWT.
-    const { url } = supabaseConfig();
-    const anon = createClient(url, jwt, { auth: { persistSession: false } });
-    const { data: userData, error: userErr } = await anon.auth.getUser(jwt);
-    if (userErr || !userData?.user) return jsonResponse({ error: "invalid token" }, 401);
+    const user = await getUserFromJwt(jwt);
+    if (!user) return jsonResponse({ error: "invalid token" }, 401);
 
     const cfg = mlConfig();
     const state = randomString(24);
@@ -29,7 +26,7 @@ Deno.serve(async (req) => {
     const admin = createAdminClient();
     const { error } = await admin.from("oauth_states").insert({
       state,
-      profile_id: userData.user.id,
+      profile_id: user.id,
       code_verifier: pkce.codeVerifier,
       redirect_uri: cfg.redirectUri,
     });

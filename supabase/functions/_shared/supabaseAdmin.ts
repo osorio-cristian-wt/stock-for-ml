@@ -8,3 +8,14 @@ export function createAdminClient(): SupabaseClient {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 }
+
+// Validates an app user's JWT against GoTrue using the service-role key.
+export async function getUserFromJwt(jwt: string) {
+  const { url, serviceRoleKey } = supabaseConfig();
+  const authClient = createClient(url, serviceRoleKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const { data, error } = await authClient.auth.getUser(jwt);
+  if (error || !data.user) return null;
+  return data.user;
+}

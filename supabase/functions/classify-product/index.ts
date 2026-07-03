@@ -2,9 +2,9 @@
 // LLM fallback classifier (LAST resort — used only when the ML catalog/predictor
 // could not classify). Returns { category_slug, brand, confidence } with the
 // model constrained to the caller's category slugs via structured outputs.
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { handlePreflight, jsonResponse } from "../_shared/cors.ts";
-import { anthropicConfig, supabaseConfig } from "../_shared/env.ts";
+import { anthropicConfig } from "../_shared/env.ts";
+import { getUserFromJwt } from "../_shared/supabaseAdmin.ts";
 
 interface ClassifyRequest {
   title?: string;
@@ -21,10 +21,8 @@ Deno.serve(async (req) => {
     // Authenticated app user only (this calls a paid API behind the backend).
     const jwt = (req.headers.get("Authorization") ?? "").replace("Bearer ", "");
     if (!jwt) return jsonResponse({ error: "missing bearer token" }, 401);
-    const { url } = supabaseConfig();
-    const anon = createClient(url, jwt, { auth: { persistSession: false } });
-    const { data: userData, error: userErr } = await anon.auth.getUser(jwt);
-    if (userErr || !userData?.user) return jsonResponse({ error: "invalid token" }, 401);
+    const user = await getUserFromJwt(jwt);
+    if (!user) return jsonResponse({ error: "invalid token" }, 401);
 
     const body = await req.json().catch(() => ({})) as ClassifyRequest;
     const title = (body.title ?? "").trim();
