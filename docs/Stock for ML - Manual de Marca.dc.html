@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    doc-page:not(:defined){visibility:hidden}
+    body{margin:0;}
+  </style>
+</helmet>
+
+<x-import component-from-global-scope="doc-page" from="./doc-page.js" size="letter" margin="0.85in" hint-size="100%,2000px">
+
+  <!-- ============ PORTADA ============ -->
+  <div style="background:#0d0f13;border-radius:14px;padding:56px 48px;margin-bottom:36px;">
+    <div style="display:flex;align-items:center;gap:20px;">
+      <svg width="72" height="72" viewBox="0 0 64 64">
+        <path d="M32 6 L56 18 L56 46 L32 58 L8 46 L8 18 Z" fill="none" stroke="#10b981" stroke-width="3.2" stroke-linejoin="round"></path>
+        <path d="M8 18 L32 30 L56 18" fill="none" stroke="#10b981" stroke-width="3.2" stroke-linejoin="round"></path>
+        <path d="M32 30 L32 58" fill="none" stroke="#10b981" stroke-width="3.2"></path>
+        <path d="M20 12 L44 24" fill="none" stroke="#10b981" stroke-width="3.2" opacity="0.5"></path>
+      </svg>
+      <div>
+        <div style="font-family:'Space Grotesk',sans-serif;font-size:38px;font-weight:700;color:#eef2f6;letter-spacing:-0.02em;line-height:1;">Stock<span style="font-weight:400;color:#6b7684;">for</span><span style="color:#10b981;">ML</span></div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:0.22em;text-transform:uppercase;color:#5b6573;margin-top:8px;">stock · rentabilidad</div>
+      </div>
+    </div>
+    <div style="margin-top:44px;padding-top:20px;border-top:1px solid #232a33;display:flex;justify-content:space-between;align-items:baseline;">
+      <span style="font-family:'Space Grotesk',sans-serif;font-size:15px;font-weight:600;color:#eef2f6;">Manual de marca</span>
+      <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#5b6573;">v1.0 · julio 2026</span>
+    </div>
+  </div>
+
+  <div style="font-family:'Space Grotesk',sans-serif;color:#1a1d22;">
+
+    <!-- ============ 01 EL LOGOTIPO ============ -->
+    <h2 style="font-size:22px;font-weight:700;letter-spacing:-0.01em;margin:0 0 6px;">01 · El logotipo</h2>
+    <p style="font-size:14px;line-height:1.65;color:#4a505a;margin:0 0 18px;max-width:560px;">La marca combina el <strong>isotipo</strong> (caja isométrica en trazo) con el <strong>wordmark</strong> Stock<em>for</em>ML. La caja representa el inventario físico; el trazo abierto y la diagonal interior sugieren movimiento de mercadería. El wordmark destaca "ML" en esmeralda como guiño a la integración con MercadoLibre.</p>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;">
+      <figure style="margin:0;break-inside:avoid;">
+        <div style="background:#0d0f13;border-radius:12px;padding:36px;display:flex;align-items:center;justify-content:center;gap:16px;">
+          <svg width="52" height="52" viewBox="0 0 64 64">
+            <path d="M32 6 L56 18 L56 46 L32 58 L8 46 L8 18 Z" fill="none" stroke="#10b981" stroke-width="3.2" stroke-linejoin="round"></path>
+            <path d="M8 18 L32 30 L56 18" fill="none" stroke="#10b981" stroke-width="3.2" stroke-linejoin="round"></path>
+            <path d="M32 30 L32 58" fill="none" stroke="#10b981" stroke-width="3.2"></path>
+            <path d="M20 12 L44 24" fill="none" stroke="#10b981" stroke-width="3.2" opacity="0.5"></path>
+          </svg>
+          <div>
+            <div style="font-size:25px;font-weight:700;color:#eef2f6;letter-spacing:-0.02em;line-height:1;">Stock<span style="font-weight:400;color:#6b7684;">for</span><span style="color:#10b981;">ML</span></div>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:8px;letter-spacing:0.22em;text-transform:uppercase;color:#5b6573;margin-top:5px;">stock · rentabilidad</div>
+          </div>
+        </div>
+        <figcaption style="font-size:11.5px;color:#7a818c;margin-top:7px;">Versión principal — sobre fondo Carbón</figcaption>
+      </figure>
+      <figure style="margin:0;break-inside:avoid;">
+        <div style="background:#f4f6f8;border:1px solid #e3e7ec;border-radius:12px;padding:36px;display:flex;align-items:center;justify-content:center;gap:16px;">
+          <svg width="52" height="52" viewBox="0 0 64 64">
+            <path d="M32 6 L56 18 L56 46 L32 58 L8 46 L8 18 Z" fill="none" stroke="#0d0f13" stroke-width="3.2" stroke-linejoin="round"></path>
+            <path d="M8 18 L32 30 L56 18" fill="none" stroke="#0d0f13" stroke-width="3.2" stroke-linejoin="round"></path>
+            <path d="M32 30 L32 58" fill="none" stroke="#0d0f13" stroke-width="3.2"></path>
+            <path d="M20 12 L44 24" fill="none" stroke="#0e9c6e" stroke-width="3.2"></path>
+          </svg>
+          <div>
+            <div style="font-size:25px;font-weight:700;color:#0d0f13;letter-spacing:-0.02em;line-height:1;">Stock<span style="font-weight:400;color:#8a94a2;">for</span><span style="color:#0e9c6e;">ML</span></div>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:8px;letter-spacing:0.22em;text-transform:uppercase;color:#8a94a2;margin-top:5px;">stock · rentabilidad</div>
+          </div>
+        </div>
+        <figcaption style="font-size:11.5px;color:#7a818c;margin-top:7px;">Versión clara — para fondos claros e impresión</figcaption>
+      </figure>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:28px;">
+      <figure style="margin:0;break-inside:avoid;">
+        <div style="background:#e9ebee;border-radius:12px;padding:24px;display:flex;align-items:center;justify-content:center;">
+          <div style="width:64px;height:64px;border-radius:17px;background:#0d0f13;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 16px -6px rgba(0,0,0,0.4);">
+            <svg width="40" height="40" viewBox="0 0 64 64">
+              <path d="M32 6 L56 18 L56 46 L32 58 L8 46 L8 18 Z" fill="none" stroke="#10b981" stroke-width="3.2" stroke-linejoin="round"></path>
+              <path d="M8 18 L32 30 L56 18" fill="none" stroke="#10b981" stroke-width="3.2" stroke-linejoin="round"></path>
+              <path d="M32 30 L32 58" fill="none" stroke="#10b981" stroke-width="3.2"></path>
+              <path d="M20 12 L44 24" fill="none" stroke="#10b981" stroke-width="3.2" opacity="0.5"></path>
+            </svg>
+          </div>
+        </div>
+        <figcaption style="font-size:11.5px;color:#7a818c;margin-top:7px;">Ícono de app — caja en trazo sobre Carbón</figcaption>
+      </figure>
+      <figure style="margin:0;break-inside:avoid;">
+        <div style="background:#e9ebee;border-radius:12px;padding:24px;display:flex;align-items:center;justify-content:center;">
+          <svg width="56" height="56" viewBox="0 0 64 64">
+            <path d="M32 6 L56 18 L56 46 L32 58 L8 46 L8 18 Z" fill="none" stroke="#0d0f13" stroke-width="3.2" stroke-linejoin="round"></path>
+            <path d="M8 18 L32 30 L56 18" fill="none" stroke="#0d0f13" stroke-width="3.2" stroke-linejoin="round"></path>
+            <path d="M32 30 L32 58" fill="none" stroke="#0d0f13" stroke-width="3.2"></path>
+            <path d="M20 12 L44 24" fill="none" stroke="#0e9c6e" stroke-width="3.2"></path>
+          </svg>
+        </div>
+        <figcaption style="font-size:11.5px;color:#7a818c;margin-top:7px;">Isotipo suelto — mínimo 24 px de alto</figcaption>
+      </figure>
+      <figure style="margin:0;break-inside:avoid;">
+        <div style="background:#e9ebee;border-radius:12px;padding:24px;display:flex;align-items:center;justify-content:center;">
+          <div style="border:1.5px dashed #b3bac4;border-radius:8px;padding:14px 18px;">
+            <svg width="40" height="40" viewBox="0 0 64 64">
+              <path d="M32 6 L56 18 L56 46 L32 58 L8 46 L8 18 Z" fill="none" stroke="#0d0f13" stroke-width="3.2" stroke-linejoin="round"></path>
+              <path d="M8 18 L32 30 L56 18" fill="none" stroke="#0d0f13" stroke-width="3.2" stroke-linejoin="round"></path>
+              <path d="M32 30 L32 58" fill="none" stroke="#0d0f13" stroke-width="3.2"></path>
+            </svg>
+          </div>
+        </div>
+        <figcaption style="font-size:11.5px;color:#7a818c;margin-top:7px;">Área de seguridad — ½ del ancho de la caja en cada lado</figcaption>
+      </figure>
+    </div>
+
+    <!-- ============ 02 COLOR ============ -->
+    <h2 style="font-size:22px;font-weight:700;letter-spacing:-0.01em;margin:0 0 6px;break-after:avoid;">02 · Color</h2>
+    <p style="font-size:14px;line-height:1.65;color:#4a505a;margin:0 0 18px;max-width:560px;">Paleta oscura de base con un solo acento: <strong>Esmeralda</strong> señala dinero, crecimiento y acciones primarias. Los semánticos se reservan para estados de stock. Nunca se usan dos acentos en la misma superficie.</p>
+
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:12px;break-inside:avoid;">
+      <div>
+        <div style="height:84px;border-radius:10px;background:#10b981;"></div>
+        <div style="font-size:12.5px;font-weight:600;margin-top:7px;">Esmeralda</div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#7a818c;">#10B981 · acento / CTA</div>
+      </div>
+      <div>
+        <div style="height:84px;border-radius:10px;background:#0d0f13;"></div>
+        <div style="font-size:12.5px;font-weight:600;margin-top:7px;">Carbón</div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#7a818c;">#0D0F13 · fondo</div>
+      </div>
+      <div>
+        <div style="height:84px;border-radius:10px;background:#161a20;border:1px solid #e3e7ec;"></div>
+        <div style="font-size:12.5px;font-weight:600;margin-top:7px;">Superficie</div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#7a818c;">#161A20 · tarjetas</div>
+      </div>
+      <div>
+        <div style="height:84px;border-radius:10px;background:#232a33;"></div>
+        <div style="font-size:12.5px;font-weight:600;margin-top:7px;">Borde</div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#7a818c;">#232A33 · líneas</div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:28px;break-inside:avoid;">
+      <div>
+        <div style="height:56px;border-radius:10px;background:#eef2f6;border:1px solid #e3e7ec;"></div>
+        <div style="font-size:12.5px;font-weight:600;margin-top:7px;">Texto</div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#7a818c;">#EEF2F6</div>
+      </div>
+      <div>
+        <div style="height:56px;border-radius:10px;background:#6b7684;"></div>
+        <div style="font-size:12.5px;font-weight:600;margin-top:7px;">Texto 2°</div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#7a818c;">#6B7684</div>
+      </div>
+      <div>
+        <div style="height:56px;border-radius:10px;background:#f5a524;"></div>
+        <div style="font-size:12.5px;font-weight:600;margin-top:7px;">Alerta</div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#7a818c;">#F5A524 · stock bajo</div>
+      </div>
+      <div>
+        <div style="height:56px;border-radius:10px;background:#f87171;"></div>
+        <div style="font-size:12.5px;font-weight:600;margin-top:7px;">Crítico</div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#7a818c;">#F87171 · sin stock</div>
+      </div>
+    </div>
+
+    <!-- ============ 03 TIPOGRAFÍA ============ -->
+    <h2 style="font-size:22px;font-weight:700;letter-spacing:-0.01em;margin:0 0 6px;break-after:avoid;">03 · Tipografía</h2>
+    <p style="font-size:14px;line-height:1.65;color:#4a505a;margin:0 0 18px;max-width:560px;"><strong>Space Grotesk</strong> es la única familia de interfaz: títulos, cuerpo y cifras. <strong>JetBrains Mono</strong> se reserva para metadatos técnicos: SKU, IDs de orden, etiquetas en mayúsculas y tipos de cambio.</p>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:28px;break-inside:avoid;">
+      <div style="background:#f4f6f8;border:1px solid #e3e7ec;border-radius:12px;padding:22px;">
+        <div style="font-size:30px;font-weight:700;letter-spacing:-0.02em;line-height:1.1;">Space Grotesk</div>
+        <div style="font-size:15px;font-weight:500;color:#4a505a;margin-top:8px;">Títulos 700 · cifras 700 · cuerpo 400–500</div>
+        <div style="font-size:13px;color:#7a818c;margin-top:10px;line-height:1.5;">AaBbCc 0123456789 $%±<br>Ganancia neta $41.200 · Margen 34%</div>
+      </div>
+      <div style="background:#f4f6f8;border:1px solid #e3e7ec;border-radius:12px;padding:22px;">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:24px;font-weight:500;line-height:1.1;">JetBrains Mono</div>
+        <div style="font-size:15px;font-weight:500;color:#4a505a;margin-top:8px;">Metadatos técnicos · 400–500</div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:12px;color:#7a818c;margin-top:10px;line-height:1.6;">SKU-002 · MLA111111111<br>USD 8,50 × $1.200</div>
+      </div>
+    </div>
+
+    <!-- ============ 04 USOS INCORRECTOS ============ -->
+    <h2 style="font-size:22px;font-weight:700;letter-spacing:-0.01em;margin:0 0 6px;break-after:avoid;">04 · Usos incorrectos</h2>
+    <p style="font-size:14px;line-height:1.65;color:#4a505a;margin:0 0 18px;max-width:560px;">El logotipo no se recolorea, no se rellena, no se rota ni se acompaña de sombras o degradados.</p>
+
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:28px;break-inside:avoid;">
+      <figure style="margin:0;">
+        <div style="background:#f4f6f8;border:1px solid #e3e7ec;border-radius:12px;padding:20px;display:flex;align-items:center;justify-content:center;position:relative;">
+          <svg width="44" height="44" viewBox="0 0 64 64">
+            <path d="M32 6 L56 18 L56 46 L32 58 L8 46 L8 18 Z" fill="none" stroke="#e0622a" stroke-width="3.2" stroke-linejoin="round"></path>
+            <path d="M8 18 L32 30 L56 18" fill="none" stroke="#e0622a" stroke-width="3.2" stroke-linejoin="round"></path>
+            <path d="M32 30 L32 58" fill="none" stroke="#e0622a" stroke-width="3.2"></path>
+          </svg>
+          <div style="position:absolute;top:8px;right:10px;color:#dc2626;font-size:15px;font-weight:700;">✕</div>
+        </div>
+        <figcaption style="font-size:11.5px;color:#7a818c;margin-top:7px;">No recolorear</figcaption>
+      </figure>
+      <figure style="margin:0;">
+        <div style="background:#f4f6f8;border:1px solid #e3e7ec;border-radius:12px;padding:20px;display:flex;align-items:center;justify-content:center;position:relative;">
+          <svg width="44" height="44" viewBox="0 0 64 64">
+            <path d="M32 6 L56 18 L56 46 L32 58 L8 46 L8 18 Z" fill="#10b981"></path>
+            <path d="M8 18 L32 30 L56 18" fill="none" stroke="#0d0f13" stroke-width="3" stroke-linejoin="round"></path>
+            <path d="M32 30 L32 58" fill="none" stroke="#0d0f13" stroke-width="3"></path>
+          </svg>
+          <div style="position:absolute;top:8px;right:10px;color:#dc2626;font-size:15px;font-weight:700;">✕</div>
+        </div>
+        <figcaption style="font-size:11.5px;color:#7a818c;margin-top:7px;">No rellenar la caja</figcaption>
+      </figure>
+      <figure style="margin:0;">
+        <div style="background:#f4f6f8;border:1px solid #e3e7ec;border-radius:12px;padding:20px;display:flex;align-items:center;justify-content:center;position:relative;">
+          <svg width="44" height="44" viewBox="0 0 64 64" style="transform:rotate(24deg);">
+            <path d="M32 6 L56 18 L56 46 L32 58 L8 46 L8 18 Z" fill="none" stroke="#0d0f13" stroke-width="3.2" stroke-linejoin="round"></path>
+            <path d="M8 18 L32 30 L56 18" fill="none" stroke="#0d0f13" stroke-width="3.2" stroke-linejoin="round"></path>
+            <path d="M32 30 L32 58" fill="none" stroke="#0d0f13" stroke-width="3.2"></path>
+          </svg>
+          <div style="position:absolute;top:8px;right:10px;color:#dc2626;font-size:15px;font-weight:700;">✕</div>
+        </div>
+        <figcaption style="font-size:11.5px;color:#7a818c;margin-top:7px;">No rotar</figcaption>
+      </figure>
+      <figure style="margin:0;">
+        <div style="background:linear-gradient(135deg,#7c3aed,#ec4899);border-radius:12px;padding:20px;display:flex;align-items:center;justify-content:center;position:relative;">
+          <svg width="44" height="44" viewBox="0 0 64 64">
+            <path d="M32 6 L56 18 L56 46 L32 58 L8 46 L8 18 Z" fill="none" stroke="#10b981" stroke-width="3.2" stroke-linejoin="round"></path>
+            <path d="M8 18 L32 30 L56 18" fill="none" stroke="#10b981" stroke-width="3.2" stroke-linejoin="round"></path>
+            <path d="M32 30 L32 58" fill="none" stroke="#10b981" stroke-width="3.2"></path>
+          </svg>
+          <div style="position:absolute;top:8px;right:10px;color:#fff;font-size:15px;font-weight:700;">✕</div>
+        </div>
+        <figcaption style="font-size:11.5px;color:#7a818c;margin-top:7px;">No usar sobre degradados</figcaption>
+      </figure>
+    </div>
+
+    <!-- ============ 05 VOZ ============ -->
+    <h2 style="font-size:22px;font-weight:700;letter-spacing:-0.01em;margin:0 0 6px;break-after:avoid;">05 · Voz y tono</h2>
+    <p style="font-size:14px;line-height:1.65;color:#4a505a;margin:0 0 14px;max-width:560px;">Directa, rioplatense, sin jerga contable. Se habla de <strong>ganancia</strong>, no de "utilidad neta". Voseo siempre: "Vendiste 2× Auriculares", "Estás 8% sobre el más barato". Las cifras llevan formato argentino: $41.200, USD 8,50.</p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;break-inside:avoid;">
+      <div style="background:#f0faf6;border:1px solid #bfe8d8;border-radius:12px;padding:16px;">
+        <div style="font-size:12px;font-weight:700;color:#0e9c6e;margin-bottom:6px;">✓ Sí</div>
+        <div style="font-size:13px;color:#374151;line-height:1.6;">"Quedan 3 u. — reponé antes del viernes."<br>"Bajando a $23.500 seguís con 43% de margen."</div>
+      </div>
+      <div style="background:#fdf2f2;border:1px solid #f3c7c7;border-radius:12px;padding:16px;">
+        <div style="font-size:12px;font-weight:700;color:#dc2626;margin-bottom:6px;">✕ No</div>
+        <div style="font-size:13px;color:#374151;line-height:1.6;">"El inventario disponible es insuficiente."<br>"Su margen de utilidad podría optimizarse."</div>
+      </div>
+    </div>
+
+  </div>
+</x-import>
+</x-dc>
+</body>
+</html>
