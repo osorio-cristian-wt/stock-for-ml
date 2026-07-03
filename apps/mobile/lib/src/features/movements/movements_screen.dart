@@ -1,20 +1,19 @@
 import 'package:core_models/core_models.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/queries.dart';
 import '../../data/supabase_providers.dart';
 import '../../theme/app_colors.dart';
+import '../../ui/format.dart';
 import '../../ui/widgets/app_widgets.dart';
-import '../scan/code_scanner_screen.dart';
+import '../purchases/purchase_edit_screen.dart';
+import '../sales/local_sale_screen.dart';
+import 'transfer_screen.dart';
 
-/// Tab Movimientos · transferencia de stock entre depósitos, estilo "carga de
-/// compra": se elige EXPLÍCITAMENTE de qué depósito sale y a cuál llega, se
-/// marcan cantidades sobre los productos con stock en el origen (las filas con
-/// movimiento ≠ 0 se resaltan) — a mano o escaneando — y al confirmar se
-/// muestra el detalle de lo movido. Solo control interno: una transferencia
-/// balanceada no cambia el disponible total, así que no empuja nada a ML.
+/// Tab Movimientos · feed unificado de ventas + compras + transferencias,
+/// agrupado por día (Hoy / Ayer / dd-mm) con chips de filtro y un speed dial
+/// con las tres acciones: Nueva venta · Nueva compra · Transferir.
 class MovementsScreen extends ConsumerStatefulWidget {
   const MovementsScreen({super.key});
 
@@ -22,317 +21,191 @@ class MovementsScreen extends ConsumerStatefulWidget {
   ConsumerState<MovementsScreen> createState() => _MovementsScreenState();
 }
 
+enum _Filter { all, sales, purchases, transfers }
+
 class _MovementsScreenState extends ConsumerState<MovementsScreen> {
-  String? _fromId;
-  String? _toId;
+  _Filter _filter = _Filter.all;
+  bool _dialOpen = false;
 
-  /// productId → unidades a mover (solo > 0 cuentan).
-  final Map<String, int> _qty = {};
-  bool _busy = false;
+  void _closeDial() => setState(() => _dialOpen = false);
 
-  bool get _ready => _fromId != null && _toId != null && _fromId != _toId;
-
-  int _totalUnits() => _qty.values.fold(0, (a, b) => a + b);
-
-  List<ProductStock> _movable(List<ProductStock> rows) =>
-      rows.where((s) => s.available > 0).toList()
-        ..sort((a, b) => b.available.compareTo(a.available));
-
-  void _setQty(ProductStock s, int value) {
-    setState(() {
-      final v = value.clamp(0, s.available);
-      if (v == 0) {
-        _qty.remove(s.productId);
-      } else {
-        _qty[s.productId] = v;
-      }
-    });
-  }
-
-  void _swap() {
-    setState(() {
-      final f = _fromId;
-      _fromId = _toId;
-      _toId = f;
-      _qty.clear();
-    });
-  }
-
-  /// "Volver atrás" del movimiento en curso: limpia ruta y cantidades.
-  void _reset() {
-    setState(() {
-      _fromId = null;
-      _toId = null;
-      _qty.clear();
-    });
-  }
-
-  /// Reusa el escáner de compras: el código busca por SKU/GTIN entre los
-  /// productos CON stock en el depósito de origen y suma +1 a su cantidad.
-  Future<void> _scan(List<ProductStock> movable, Map<String, Product> products) async {
-    final code = await CodeScannerScreen.scan(
-      context,
-      title: 'Escanear para mover',
-      subtitle: 'Cada lectura suma +1 al producto en el depósito de origen.',
-    );
-    if (code == null || code.isEmpty || !mounted) return;
-
-    final sc = ScannedCode.classify(code);
-    final keys = {code.toLowerCase(), if (sc.gtin != null) sc.gtin!.toLowerCase()};
-    ProductStock? hit;
-    for (final s in movable) {
-      final p = products[s.productId];
-      if (p == null) continue;
-      if (keys.contains(p.sku?.toLowerCase()) ||
-          keys.contains(p.gtin?.toLowerCase())) {
-        hit = s;
-        break;
-      }
-    }
-    if (hit == null) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('“$code” no tiene stock en el depósito de origen.')));
-      return;
-    }
-    final current = _qty[hit.productId] ?? 0;
-    if (current >= hit.available) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Ya marcaste todo el disponible de ese producto.')));
-      return;
-    }
-    await HapticFeedback.mediumImpact();
-    _setQty(hit, current + 1);
-  }
-
-  Future<void> _confirm(
-    Map<String, Product> products,
-    Map<String, Warehouse> warehouses,
-  ) async {
-    final lines = _qty.entries.where((e) => e.value > 0).toList();
-    if (lines.isEmpty || !_ready) return;
-    setState(() => _busy = true);
-    final repo = ref.read(inventoryRepositoryProvider);
-    final moved = <(String title, int qty)>[];
-    String? error;
+  Future<void> _newPurchase() async {
+    final userId = ref.read(supabaseClientProvider).auth.currentUser?.id ?? '';
     try {
-      for (final e in lines) {
-        await repo.transferStock(
-          productId: e.key,
-          fromWarehouseId: _fromId!,
-          toWarehouseId: _toId!,
-          qty: e.value,
-        );
-        moved.add((products[e.key]?.title ?? 'Producto', e.value));
-      }
+      final draft = await ref
+          .read(purchasesRepositoryProvider)
+          .createDraft(profileId: userId);
+      if (!mounted) return;
+      Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => PurchaseEditScreen(purchase: draft)),
+      );
     } catch (e) {
-      error = e.toString().split('\n').first;
-    }
-    if (!mounted) return;
-    setState(() {
-      _busy = false;
-      for (final (i, _) in moved.indexed) {
-        _qty.remove(lines[i].key);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('No se pudo crear la compra. $e')),
+        );
       }
-    });
-    await showModalBottomSheet<void>(
-      context: context,
-      builder: (_) => _SummarySheet(
-        fromName: warehouses[_fromId]?.name ?? 'Origen',
-        toName: warehouses[_toId]?.name ?? 'Destino',
-        moved: moved,
-        error: error,
-      ),
-    );
+    }
   }
+
+  bool _matches(MovementEntry e) => switch (_filter) {
+        _Filter.all => true,
+        _Filter.sales => e is SaleEntry,
+        _Filter.purchases => e is PurchaseEntry,
+        _Filter.transfers => e is TransferEntry,
+      };
 
   @override
   Widget build(BuildContext context) {
-    final warehouses =
-        ref.watch(warehousesStreamProvider).valueOrNull ?? const <Warehouse>[];
+    final salesAsync = ref.watch(salesProvider);
+    final purchasesAsync = ref.watch(purchasesStreamProvider);
+    final transfersAsync = ref.watch(transfersStreamProvider);
+    final feed = ref.watch(movementsFeedProvider);
+    final entries = feed.where(_matches).toList();
+
     final products = {
       for (final p
           in ref.watch(productsStreamProvider).valueOrNull ?? const <Product>[])
         p.id: p,
     };
-    final byId = {for (final w in warehouses) w.id: w};
-    final stockRows = _ready
-        ? (ref.watch(stockInWarehouseProvider(_fromId!)).valueOrNull ??
-            const <ProductStock>[])
-        : const <ProductStock>[];
-    final movable = _movable(stockRows);
-    final marked = _qty.entries.where((e) => e.value > 0).length;
-    final units = _totalUnits();
+    final customers = {
+      for (final c
+          in ref.watch(customersProvider).valueOrNull ?? const <Customer>[])
+        c.id: c,
+    };
+    final suppliers = {
+      for (final s
+          in ref.watch(suppliersProvider).valueOrNull ?? const <Supplier>[])
+        s.id: s,
+    };
+    final warehouseNames = {
+      for (final w
+          in ref.watch(warehousesStreamProvider).valueOrNull ?? const <Warehouse>[])
+        w.id: w.name,
+    };
+
+    final booting = feed.isEmpty &&
+        (salesAsync.isLoading ||
+            purchasesAsync.isLoading ||
+            transfersAsync.isLoading);
+    final sales = salesAsync.valueOrNull ?? const <Sale>[];
 
     return Scaffold(
-      body: SafeArea(
-        bottom: false,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
-              child: Row(
-                children: [
-                  const Expanded(
-                    child: Text('Movimientos',
-                        style: TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.textPrimary)),
-                  ),
-                  if (_fromId != null || _toId != null || _qty.isNotEmpty)
-                    TextButton.icon(
-                      onPressed: _reset,
-                      icon: const Icon(Icons.close, size: 16),
-                      style: TextButton.styleFrom(
-                          foregroundColor: AppColors.textSecondary),
-                      label: const Text('Cancelar'),
-                    ),
-                  if (_ready)
-                    IconButton(
-                      tooltip: 'Escanear producto',
-                      onPressed: () => _scan(movable, products),
-                      icon: const Icon(Icons.qr_code_scanner_rounded,
-                          color: AppColors.primary),
-                    ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 10),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: _RouteCard(
-                warehouses: warehouses,
-                fromId: _fromId,
-                toId: _toId,
-                onFrom: (id) => setState(() {
-                  _fromId = id;
-                  _qty.clear();
-                }),
-                onTo: (id) => setState(() => _toId = id),
-                onSwap: _swap,
-              ),
-            ),
-            const SizedBox(height: 12),
-            Expanded(
-              child: !_ready
-                  ? const EmptyState(
-                      icon: Icons.swap_horiz_rounded,
-                      title: 'Elegí origen y destino',
-                      message:
-                          'Marcá de qué depósito sale el stock y a cuál llega. '
-                          'Después seleccioná o escaneá los productos a mover.',
-                    )
-                  : movable.isEmpty
-                      ? const EmptyState(
-                          icon: Icons.inventory_2_outlined,
-                          title: 'Sin stock disponible',
-                          message:
-                              'El depósito de origen no tiene productos con '
-                              'stock disponible para mover.',
-                        )
-                      : ListView.separated(
-                          padding: const EdgeInsets.fromLTRB(20, 0, 20, 120),
-                          itemCount: movable.length,
-                          separatorBuilder: (_, __) => const SizedBox(height: 9),
-                          itemBuilder: (_, i) {
-                            final s = movable[i];
-                            return _MoveRow(
-                              stock: s,
-                              product: products[s.productId],
-                              qty: _qty[s.productId] ?? 0,
-                              onChanged: (v) => _setQty(s, v),
-                            );
-                          },
-                        ),
-            ),
-          ],
-        ),
+      floatingActionButton: _SpeedDial(
+        open: _dialOpen,
+        onToggle: () => setState(() => _dialOpen = !_dialOpen),
+        onSale: () {
+          _closeDial();
+          LocalSaleScreen.open(context);
+        },
+        onPurchase: () {
+          _closeDial();
+          _newPurchase();
+        },
+        onTransfer: () {
+          _closeDial();
+          TransferScreen.open(context);
+        },
       ),
-      bottomNavigationBar: _ready && marked > 0
-          ? SafeArea(
-              top: false,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
-                child: FilledButton(
-                  onPressed: _busy ? null : () => _confirm(products, byId),
-                  child: _busy
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2.4, color: AppColors.onPrimary),
-                        )
-                      : Text('Mover $marked producto'
-                          '${marked == 1 ? '' : 's'} · $units u.'),
+      body: Stack(
+        children: [
+          SafeArea(
+            bottom: false,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(20, 14, 20, 12),
+                  child: Text('Movimientos',
+                      style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.textPrimary)),
                 ),
+                _FilterRow(
+                  filter: _filter,
+                  onChanged: (f) => setState(() => _filter = f),
+                ),
+                const SizedBox(height: 4),
+                Expanded(
+                  child: booting
+                      ? const Loading()
+                      : RefreshIndicator(
+                          color: AppColors.primary,
+                          backgroundColor: AppColors.surface,
+                          onRefresh: () async {
+                            ref.invalidate(salesProvider);
+                            await ref.read(salesProvider.future);
+                          },
+                          child: _FeedList(
+                            filter: _filter,
+                            entries: entries,
+                            sales: sales,
+                            salesError: salesAsync.hasError
+                                ? '${salesAsync.error}'
+                                : null,
+                            onRetrySales: () => ref.invalidate(salesProvider),
+                            products: products,
+                            customers: customers,
+                            suppliers: suppliers,
+                            warehouseNames: warehouseNames,
+                          ),
+                        ),
+                ),
+              ],
+            ),
+          ),
+          if (_dialOpen)
+            Positioned.fill(
+              child: GestureDetector(
+                onTap: _closeDial,
+                child: Container(color: Colors.black54),
               ),
-            )
-          : null,
+            ),
+        ],
+      ),
     );
   }
 }
 
-/// "Sale de X → llega a Y", bien explícito, con botón para invertir.
-class _RouteCard extends StatelessWidget {
-  const _RouteCard({
-    required this.warehouses,
-    required this.fromId,
-    required this.toId,
-    required this.onFrom,
-    required this.onTo,
-    required this.onSwap,
-  });
+double _net(Sale s) => s.netAmount ?? (s.gross - s.saleFee - s.shippingCost);
 
-  final List<Warehouse> warehouses;
-  final String? fromId;
-  final String? toId;
-  final ValueChanged<String?> onFrom;
-  final ValueChanged<String?> onTo;
-  final VoidCallback onSwap;
+class _FilterRow extends StatelessWidget {
+  const _FilterRow({required this.filter, required this.onChanged});
+
+  final _Filter filter;
+  final ValueChanged<_Filter> onChanged;
 
   @override
   Widget build(BuildContext context) {
-    if (warehouses.length < 2) {
-      return const SurfaceCard(
-        child: Text(
-          'Necesitás al menos 2 depósitos para mover stock. Creá otro desde '
-          'Ajustes → Depósitos.',
-          style: TextStyle(fontSize: 13, color: AppColors.textMuted, height: 1.4),
-        ),
-      );
-    }
-    return SurfaceCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+    return SizedBox(
+      height: 32,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 20),
         children: [
-          _Picker(
-            label: 'SALE DE',
-            icon: Icons.logout_rounded,
-            warehouses: warehouses,
-            selectedId: fromId,
-            excludeId: null,
-            onChanged: onFrom,
+          _Chip(
+            label: 'Todos',
+            selected: filter == _Filter.all,
+            onTap: () => onChanged(_Filter.all),
           ),
-          Row(
-            children: [
-              const Expanded(child: Divider(color: AppColors.border, height: 22)),
-              IconButton(
-                tooltip: 'Invertir',
-                onPressed: onSwap,
-                icon: const Icon(Icons.swap_vert_rounded,
-                    color: AppColors.primary, size: 22),
-              ),
-              const Expanded(child: Divider(color: AppColors.border, height: 22)),
-            ],
+          const SizedBox(width: 7),
+          _Chip(
+            label: 'Ventas',
+            selected: filter == _Filter.sales,
+            onTap: () => onChanged(_Filter.sales),
           ),
-          _Picker(
-            label: 'LLEGA A',
-            icon: Icons.login_rounded,
-            warehouses: warehouses,
-            selectedId: toId,
-            excludeId: fromId,
-            onChanged: onTo,
+          const SizedBox(width: 7),
+          _Chip(
+            label: 'Compras',
+            selected: filter == _Filter.purchases,
+            onTap: () => onChanged(_Filter.purchases),
+          ),
+          const SizedBox(width: 7),
+          _Chip(
+            label: 'Transferencias',
+            selected: filter == _Filter.transfers,
+            onTap: () => onChanged(_Filter.transfers),
           ),
         ],
       ),
@@ -340,88 +213,439 @@ class _RouteCard extends StatelessWidget {
   }
 }
 
-class _Picker extends StatelessWidget {
-  const _Picker({
-    required this.label,
-    required this.icon,
-    required this.warehouses,
-    required this.selectedId,
-    required this.excludeId,
-    required this.onChanged,
-  });
+class _Chip extends StatelessWidget {
+  const _Chip({required this.label, required this.selected, required this.onTap});
 
   final String label;
-  final IconData icon;
-  final List<Warehouse> warehouses;
-  final String? selectedId;
-  final String? excludeId;
-  final ValueChanged<String?> onChanged;
+  final bool selected;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Icon(icon, size: 18, color: AppColors.textSecondary),
-        const SizedBox(width: 10),
-        SizedBox(
-          width: 64,
-          child: Text(label,
-              style: const TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0.6,
-                  color: AppColors.textMuted)),
-        ),
-        Expanded(
-          child: DropdownButtonFormField<String?>(
-            value: selectedId,
-            isExpanded: true,
-            dropdownColor: AppColors.surface,
-            style: const TextStyle(color: AppColors.textPrimary, fontSize: 14),
-            icon: const Icon(Icons.expand_more, color: AppColors.textFaint),
-            decoration: const InputDecoration(hintText: 'Elegí un depósito'),
-            items: [
-              for (final w in warehouses)
-                if (w.id != excludeId)
-                  DropdownMenuItem<String?>(
-                    value: w.id,
-                    child: Text(w.isDefault ? '${w.name} · principal' : w.name),
-                  ),
-            ],
-            onChanged: onChanged,
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 6),
+        decoration: BoxDecoration(
+          color: selected ? AppColors.primary : AppColors.surface,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(
+            color: selected ? AppColors.primary : AppColors.border,
           ),
         ),
-      ],
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: selected ? AppColors.onPrimary : AppColors.textSecondary,
+          ),
+        ),
+      ),
     );
   }
 }
 
-/// Fila de producto con stepper; se pinta (borde + fondo primario suave)
-/// cuando tiene un movimiento marcado ≠ 0.
-class _MoveRow extends StatelessWidget {
-  const _MoveRow({
-    required this.stock,
-    required this.product,
-    required this.qty,
-    required this.onChanged,
+/// Cuerpo del feed: resumen del mes (en Todos/Ventas), error de ventas si lo
+/// hubo (las compras/transferencias siguen visibles) y las entradas agrupadas
+/// por día.
+class _FeedList extends StatelessWidget {
+  const _FeedList({
+    required this.filter,
+    required this.entries,
+    required this.sales,
+    required this.salesError,
+    required this.onRetrySales,
+    required this.products,
+    required this.customers,
+    required this.suppliers,
+    required this.warehouseNames,
   });
 
-  final ProductStock stock;
-  final Product? product;
-  final int qty;
-  final ValueChanged<int> onChanged;
+  final _Filter filter;
+  final List<MovementEntry> entries;
+  final List<Sale> sales;
+  final String? salesError;
+  final VoidCallback onRetrySales;
+  final Map<String, Product> products;
+  final Map<String, Customer> customers;
+  final Map<String, Supplier> suppliers;
+  final Map<String, String> warehouseNames;
 
   @override
   Widget build(BuildContext context) {
-    final marked = qty > 0;
+    final groups = _groupByDay(entries, DateTime.now());
+    final showSummary = filter == _Filter.all || filter == _Filter.sales;
+
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 120),
+      children: [
+        if (showSummary) ...[
+          _MonthSummaryCard(sales: sales),
+          const SizedBox(height: 18),
+        ],
+        if (salesError != null) ...[
+          InlineError(message: salesError!, onRetry: onRetrySales),
+          const SizedBox(height: 18),
+        ],
+        if (entries.isEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 40),
+            child: _emptyState(),
+          )
+        else
+          for (final group in groups) ...[
+            SectionHeader(group.label, uppercase: true),
+            const SizedBox(height: 10),
+            for (final e in group.entries) ...[
+              _row(e),
+              const SizedBox(height: 9),
+            ],
+            const SizedBox(height: 8),
+          ],
+      ],
+    );
+  }
+
+  Widget _row(MovementEntry e) => switch (e) {
+        SaleEntry(:final sale) => _SaleRow(
+            sale: sale,
+            product: products[sale.productId],
+            customer: sale.customerId == null ? null : customers[sale.customerId],
+          ),
+        PurchaseEntry(:final purchase) => _PurchaseRow(
+            purchase: purchase,
+            supplier: suppliers[purchase.supplierId],
+          ),
+        TransferEntry(:final transfer) => _TransferRow(
+            transfer: transfer,
+            product: products[transfer.productId],
+            warehouseNames: warehouseNames,
+          ),
+      };
+
+  Widget _emptyState() => switch (filter) {
+        _Filter.all => const EmptyState(
+            icon: Icons.swap_horiz_rounded,
+            title: 'Sin movimientos todavía',
+            message: 'Cargá una venta, una compra o una transferencia '
+                'con el botón +.',
+          ),
+        _Filter.sales => const EmptyState(
+            icon: Icons.receipt_long_outlined,
+            title: 'Todavía no hay ventas',
+            message: 'Cuando vendas en ML o cargues una venta local, '
+                'las verás acá con su ganancia neta.',
+          ),
+        _Filter.purchases => const EmptyState(
+            icon: Icons.receipt_long_outlined,
+            title: 'Todavía no hay compras',
+            message: 'Cargá una compra a un proveedor con el botón +.',
+          ),
+        _Filter.transfers => const EmptyState(
+            icon: Icons.swap_horiz_rounded,
+            title: 'Sin transferencias',
+            message: 'Movés stock entre depósitos con el botón +.',
+          ),
+      };
+
+  List<_DayGroup> _groupByDay(List<MovementEntry> entries, DateTime now) {
+    final today = DateTime(now.year, now.month, now.day);
+    final map = <String, _DayGroup>{};
+    final order = <String>[];
+
+    String labelFor(DateTime? d) {
+      if (d == null) return 'Sin fecha';
+      final local = DateTime(d.toLocal().year, d.toLocal().month, d.toLocal().day);
+      final diff = today.difference(local).inDays;
+      if (diff <= 0) return 'Hoy';
+      if (diff == 1) return 'Ayer';
+      return '${local.day.toString().padLeft(2, '0')}/'
+          '${local.month.toString().padLeft(2, '0')}';
+    }
+
+    for (final e in entries) {
+      final label = labelFor(e.date);
+      final g = map.putIfAbsent(label, () {
+        order.add(label);
+        return _DayGroup(label);
+      });
+      g.entries.add(e);
+    }
+    return order.map((l) => map[l]!).toList();
+  }
+}
+
+class _DayGroup {
+  _DayGroup(this.label);
+  final String label;
+  final List<MovementEntry> entries = [];
+}
+
+/// "Este mes" (bruto) + ganancia neta, calculado sobre las ventas del mes.
+class _MonthSummaryCard extends StatelessWidget {
+  const _MonthSummaryCard({required this.sales});
+
+  final List<Sale> sales;
+
+  @override
+  Widget build(BuildContext context) {
+    final now = DateTime.now();
+    final monthSales = sales.where((s) {
+      final d = s.soldAt?.toLocal();
+      return d != null && d.year == now.year && d.month == now.month;
+    });
+    final monthGross = monthSales.fold<double>(0, (a, s) => a + s.gross);
+    final monthNet = monthSales.fold<double>(0, (a, s) => a + _net(s));
+
     return SurfaceCard(
-      radius: 14,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Ventas este mes',
+                    style: TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textMuted,
+                        fontWeight: FontWeight.w500)),
+                const SizedBox(height: 2),
+                Text(Fmt.ars(monthGross),
+                    style: const TextStyle(
+                        fontSize: 26,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary)),
+              ],
+            ),
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              const Text('Ganancia',
+                  style: TextStyle(
+                      fontSize: 12,
+                      color: AppColors.textMuted,
+                      fontWeight: FontWeight.w500)),
+              const SizedBox(height: 2),
+              Text(Fmt.ars(monthNet),
+                  style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.primary)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SaleRow extends StatelessWidget {
+  const _SaleRow({required this.sale, this.product, this.customer});
+
+  final Sale sale;
+  final Product? product;
+  final Customer? customer;
+
+  @override
+  Widget build(BuildContext context) {
+    final title = product?.title ?? sale.mlItemId ?? 'Venta';
+    final net = _net(sale);
+    final detail = [
+      if (sale.isLocal)
+        customer?.name ?? 'Sin cliente'
+      else
+        '#${sale.mlOrderId ?? '—'}',
+      '${sale.quantity} u',
+      Fmt.clock(sale.soldAt),
+    ].join(' · ');
+    return SurfaceCard(
+      radius: 15,
       padding: const EdgeInsets.all(11),
-      color: marked ? AppColors.primarySoft : AppColors.surface,
-      borderColor: marked ? AppColors.primary : AppColors.border,
+      onTap: () => showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        builder: (_) =>
+            _SaleDetailSheet(sale: sale, product: product, customer: customer),
+      ),
       child: Row(
         children: [
-          ProductThumb(imageUrl: product?.imageUrl, size: 40, radius: 10),
+          ProductThumb(imageUrl: product?.imageUrl, size: 40, radius: 11),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                              color: AppColors.textPrimary)),
+                    ),
+                    const SizedBox(width: 6),
+                    sale.isLocal
+                        ? TagChip('Local',
+                            color: AppColors.primary,
+                            background: AppColors.primarySoft,
+                            bold: true)
+                        : const TagChip('ML', bold: true),
+                  ],
+                ),
+                Text(
+                  detail,
+                  style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
+                ),
+              ],
+            ),
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(Fmt.ars(sale.gross),
+                  style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.textPrimary)),
+              Text(Fmt.arsSigned(net),
+                  style: const TextStyle(fontSize: 11, color: AppColors.primary)),
+            ],
+          ),
+          const SizedBox(width: 2),
+          const Icon(Icons.chevron_right, size: 18, color: AppColors.textFaint),
+        ],
+      ),
+    );
+  }
+}
+
+class _PurchaseRow extends StatelessWidget {
+  const _PurchaseRow({required this.purchase, this.supplier});
+
+  final Purchase purchase;
+  final Supplier? supplier;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = purchase;
+    final draft = p.isDraft;
+    final totalText = p.currency == 'USD' ? Fmt.usd(p.total) : Fmt.ars(p.total);
+    return SurfaceCard(
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => PurchaseEditScreen(purchase: p)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: AppColors.surfaceDeep,
+              borderRadius: BorderRadius.circular(11),
+            ),
+            child: Icon(
+              draft ? Icons.edit_note_rounded : Icons.inventory_2_outlined,
+              color: draft ? AppColors.textSecondary : AppColors.primary,
+              size: 20,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(supplier?.name ?? 'Sin proveedor',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textPrimary)),
+                    ),
+                    const SizedBox(width: 6),
+                    const TagChip('Compra', bold: true),
+                  ],
+                ),
+                Text(
+                  [
+                    if (p.reference != null) '#${p.reference}',
+                    Fmt.shortDate(p.purchasedAt ?? p.createdAt),
+                  ].join(' · '),
+                  style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
+                ),
+              ],
+            ),
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              draft
+                  ? const TagChip('Borrador')
+                  : TagChip('Cerrada',
+                      color: AppColors.primary,
+                      background: AppColors.primarySoft,
+                      bold: true),
+              const SizedBox(height: 4),
+              if (!draft || p.total > 0)
+                Text(totalText,
+                    style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Una transferencia colapsada: producto, ruta origen → destino y unidades.
+class _TransferRow extends StatelessWidget {
+  const _TransferRow({
+    required this.transfer,
+    this.product,
+    required this.warehouseNames,
+  });
+
+  final TransferGroup transfer;
+  final Product? product;
+  final Map<String, String> warehouseNames;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = transfer;
+    final from = t.fromWarehouseId == null
+        ? '—'
+        : warehouseNames[t.fromWarehouseId] ?? 'Depósito';
+    final to = t.toWarehouseId == null
+        ? '—'
+        : warehouseNames[t.toWarehouseId] ?? 'Depósito';
+    return SurfaceCard(
+      radius: 15,
+      padding: const EdgeInsets.all(11),
+      child: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: AppColors.surfaceDeep,
+              borderRadius: BorderRadius.circular(11),
+            ),
+            child: const Icon(Icons.swap_horiz_rounded,
+                color: AppColors.textSecondary, size: 20),
+          ),
           const SizedBox(width: 11),
           Expanded(
             child: Column(
@@ -432,90 +656,42 @@ class _MoveRow extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                         fontSize: 13,
-                        fontWeight: FontWeight.w600,
+                        fontWeight: FontWeight.w500,
                         color: AppColors.textPrimary)),
                 Text(
-                  marked
-                      ? 'mueve $qty de ${stock.available} disp.'
-                      : '${stock.available} disp.',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: marked ? FontWeight.w600 : FontWeight.w400,
-                    color: marked ? AppColors.primary : AppColors.textMuted,
-                  ),
+                  '$from → $to · ${Fmt.clock(t.date)}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
                 ),
               ],
             ),
           ),
-          _StepBtn(icon: Icons.remove, enabled: qty > 0, onTap: () => onChanged(qty - 1)),
-          SizedBox(
-            width: 34,
-            child: Text('$qty',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                    color: marked ? AppColors.primary : AppColors.textMuted)),
-          ),
-          _StepBtn(
-              icon: Icons.add,
-              enabled: qty < stock.available,
-              onTap: () => onChanged(qty + 1)),
+          const SizedBox(width: 8),
+          Text('${t.qty} u.',
+              style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textPrimary)),
         ],
       ),
     );
   }
 }
 
-class _StepBtn extends StatelessWidget {
-  const _StepBtn({required this.icon, required this.enabled, required this.onTap});
+/// Detalle de una venta: canal, cliente/orden y las LÍNEAS de producto
+/// (`sale_items`, cargadas a demanda — las órdenes ML de varios productos
+/// muestran una fila por ítem).
+class _SaleDetailSheet extends ConsumerWidget {
+  const _SaleDetailSheet({required this.sale, this.product, this.customer});
 
-  final IconData icon;
-  final bool enabled;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: AppColors.surface,
-      borderRadius: BorderRadius.circular(9),
-      child: InkWell(
-        onTap: enabled ? onTap : null,
-        borderRadius: BorderRadius.circular(9),
-        child: Container(
-          width: 30,
-          height: 30,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(9),
-            border: Border.all(color: AppColors.borderStrong),
-          ),
-          child: Icon(icon,
-              size: 17,
-              color: enabled ? AppColors.textSecondary : AppColors.textFaint),
-        ),
-      ),
-    );
-  }
-}
-
-/// Detalle de lo movido, mostrado al confirmar.
-class _SummarySheet extends StatelessWidget {
-  const _SummarySheet({
-    required this.fromName,
-    required this.toName,
-    required this.moved,
-    this.error,
-  });
-
-  final String fromName;
-  final String toName;
-  final List<(String, int)> moved;
-  final String? error;
+  final Sale sale;
+  final Product? product;
+  final Customer? customer;
 
   @override
-  Widget build(BuildContext context) {
-    final units = moved.fold<int>(0, (a, m) => a + m.$2);
+  Widget build(BuildContext context, WidgetRef ref) {
+    final net = _net(sale);
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(22, 16, 22, 22),
@@ -523,76 +699,263 @@ class _SummarySheet extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Icon(
-              error == null ? Icons.check_circle_rounded : Icons.error_outline,
-              color: error == null ? AppColors.primary : AppColors.danger,
-              size: 34,
+            Row(
+              children: [
+                sale.isLocal
+                    ? TagChip('Venta local',
+                        color: AppColors.primary,
+                        background: AppColors.primarySoft,
+                        bold: true)
+                    : const TagChip('Venta ML', bold: true),
+                const Spacer(),
+                Text(Fmt.shortDate(sale.soldAt),
+                    style: const TextStyle(
+                        fontSize: 12, color: AppColors.textMuted)),
+              ],
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 8),
             Text(
-              error == null
-                  ? 'Movimiento realizado'
-                  : 'Movimiento incompleto',
-              textAlign: TextAlign.center,
+              sale.isLocal
+                  ? (customer?.name ?? 'Sin cliente')
+                  : 'Orden #${sale.mlOrderId ?? '—'}',
               style: const TextStyle(
-                  fontSize: 17,
+                  fontSize: 15,
                   fontWeight: FontWeight.w700,
                   color: AppColors.textPrimary),
             ),
-            const SizedBox(height: 4),
-            Text(
-              '$fromName  →  $toName',
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 13, color: AppColors.textMuted),
-            ),
             const SizedBox(height: 14),
-            for (final (title, qty) in moved)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Row(
-                  children: [
-                    const Icon(Icons.swap_horiz_rounded,
-                        size: 16, color: AppColors.textSecondary),
-                    const SizedBox(width: 9),
-                    Expanded(
-                      child: Text(title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              fontSize: 13, color: AppColors.textBody)),
+            FutureBuilder<List<SaleItem>>(
+              future: ref.read(salesRepositoryProvider).itemsFor(sale.id),
+              builder: (context, snap) {
+                if (snap.connectionState != ConnectionState.done) {
+                  return const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 16),
+                    child: Center(
+                      child: SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2.4, color: AppColors.primary),
+                      ),
                     ),
-                    Text('$qty u.',
+                  );
+                }
+                final items = snap.data ?? const <SaleItem>[];
+                if (items.isEmpty) {
+                  // Ventas anteriores al soporte multi-ítem: resumen simple.
+                  return _Line(
+                    title: product?.title ?? sale.mlItemId ?? 'Producto',
+                    qty: sale.quantity,
+                    unitPrice: sale.unitPrice,
+                  );
+                }
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    for (final it in items) ...[
+                      _Line(
+                        title: it.title ?? it.mlItemId ?? 'Producto',
+                        qty: it.quantity,
+                        unitPrice: it.unitPrice,
+                      ),
+                      const SizedBox(height: 8),
+                    ],
+                  ],
+                );
+              },
+            ),
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 10),
+              child: Divider(height: 1, color: AppColors.border),
+            ),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text('Total',
+                    style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textSecondary)),
+                Text(Fmt.ars(sale.gross),
+                    style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary)),
+              ],
+            ),
+            if (sale.saleFee > 0)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text('Comisión ML',
+                        style:
+                            TextStyle(fontSize: 12, color: AppColors.textMuted)),
+                    Text('− ${Fmt.ars(sale.saleFee)}',
                         style: const TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.textPrimary)),
+                            fontSize: 12, color: AppColors.danger)),
                   ],
                 ),
               ),
-            if (moved.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 2),
-                child: Text('Total: $units u.',
-                    textAlign: TextAlign.right,
-                    style: const TextStyle(
-                        fontSize: 12, color: AppColors.textMuted)),
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('Neto',
+                      style:
+                          TextStyle(fontSize: 12, color: AppColors.textMuted)),
+                  Text(Fmt.arsSigned(net),
+                      style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.primary)),
+                ],
               ),
-            if (error != null) ...[
-              const SizedBox(height: 8),
-              Text(
-                moved.isEmpty
-                    ? 'No se movió nada: $error'
-                    : 'Algunas líneas no se movieron: $error',
-                style: const TextStyle(fontSize: 12, color: AppColors.danger),
-              ),
-            ],
-            const SizedBox(height: 14),
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Listo'),
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _Line extends StatelessWidget {
+  const _Line({required this.title, required this.qty, required this.unitPrice});
+
+  final String title;
+  final int qty;
+  final double unitPrice;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: Text(title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: AppColors.textPrimary)),
+        ),
+        const SizedBox(width: 8),
+        Text('$qty × ${Fmt.ars(unitPrice)}',
+            style: const TextStyle(fontSize: 12, color: AppColors.textMuted)),
+        const SizedBox(width: 10),
+        Text(Fmt.ars(qty * unitPrice),
+            style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: AppColors.textPrimary)),
+      ],
+    );
+  }
+}
+
+/// FAB "+" que despliega las tres acciones etiquetadas (speed dial). La más
+/// usada (Nueva venta) queda más cerca del botón principal.
+class _SpeedDial extends StatelessWidget {
+  const _SpeedDial({
+    required this.open,
+    required this.onToggle,
+    required this.onSale,
+    required this.onPurchase,
+    required this.onTransfer,
+  });
+
+  final bool open;
+  final VoidCallback onToggle;
+  final VoidCallback onSale;
+  final VoidCallback onPurchase;
+  final VoidCallback onTransfer;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        if (open) ...[
+          _DialAction(
+            icon: Icons.swap_horiz_rounded,
+            label: 'Transferir',
+            onTap: onTransfer,
+          ),
+          const SizedBox(height: 10),
+          _DialAction(
+            icon: Icons.receipt_long_rounded,
+            label: 'Nueva compra',
+            onTap: onPurchase,
+          ),
+          const SizedBox(height: 10),
+          _DialAction(
+            icon: Icons.point_of_sale_rounded,
+            label: 'Nueva venta',
+            onTap: onSale,
+          ),
+          const SizedBox(height: 14),
+        ],
+        FloatingActionButton(
+          onPressed: onToggle,
+          backgroundColor: AppColors.primary,
+          foregroundColor: AppColors.onPrimary,
+          child: AnimatedRotation(
+            turns: open ? 0.125 : 0,
+            duration: const Duration(milliseconds: 150),
+            child: const Icon(Icons.add),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _DialAction extends StatelessWidget {
+  const _DialAction({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: AppColors.border),
+            ),
+            child: Text(label,
+                style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary)),
+          ),
+          const SizedBox(width: 10),
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              shape: BoxShape.circle,
+              border: Border.all(color: AppColors.borderStrong),
+            ),
+            child: Icon(icon, size: 20, color: AppColors.primary),
+          ),
+        ],
       ),
     );
   }

@@ -130,6 +130,109 @@ final customersProvider = FutureProvider<List<Customer>>((ref) {
   return ref.watch(customersRepositoryProvider).all();
 });
 
+/// Live transfer movements (reason = 'transfer'), newest first. Each transfer
+/// arrives as its two paired legs; [movementsFeedProvider] collapses them.
+final transfersStreamProvider = StreamProvider<List<StockMovement>>((ref) {
+  return ref.watch(inventoryRepositoryProvider).watchTransfers();
+});
+
+/// One transfer collapsed from its paired −origin/+destination legs
+/// (matched by `reference`).
+class TransferGroup {
+  const TransferGroup({
+    required this.date,
+    required this.productId,
+    required this.qty,
+    this.fromWarehouseId,
+    this.toWarehouseId,
+    this.reference,
+    this.note,
+  });
+
+  final DateTime? date;
+  final String productId;
+  final int qty;
+  final String? fromWarehouseId;
+  final String? toWarehouseId;
+  final String? reference;
+  final String? note;
+}
+
+/// Entry of the unified Movimientos feed: a sale, a purchase or a transfer.
+sealed class MovementEntry {
+  const MovementEntry();
+
+  DateTime? get date;
+}
+
+class SaleEntry extends MovementEntry {
+  const SaleEntry(this.sale);
+
+  final Sale sale;
+
+  @override
+  DateTime? get date => sale.soldAt;
+}
+
+class PurchaseEntry extends MovementEntry {
+  const PurchaseEntry(this.purchase);
+
+  final Purchase purchase;
+
+  @override
+  DateTime? get date => purchase.purchasedAt ?? purchase.createdAt;
+}
+
+class TransferEntry extends MovementEntry {
+  const TransferEntry(this.transfer);
+
+  final TransferGroup transfer;
+
+  @override
+  DateTime? get date => transfer.date;
+}
+
+/// Unified feed for the Movimientos tab: sales + purchases (cancelled ones
+/// hidden) + collapsed transfers, merged newest-first.
+final movementsFeedProvider = Provider<List<MovementEntry>>((ref) {
+  final sales = ref.watch(salesProvider).valueOrNull ?? const <Sale>[];
+  final purchases =
+      ref.watch(purchasesStreamProvider).valueOrNull ?? const <Purchase>[];
+  final legs =
+      ref.watch(transfersStreamProvider).valueOrNull ?? const <StockMovement>[];
+
+  final seen = <String>{};
+  final transfers = <TransferGroup>[];
+  for (final m in legs) {
+    final key = m.reference ?? m.id;
+    if (!seen.add(key)) continue;
+    StockMovement? out;
+    StockMovement? into;
+    for (final o in legs) {
+      if ((o.reference ?? o.id) != key) continue;
+      if (o.delta < 0) out = o;
+      if (o.delta > 0) into = o;
+    }
+    transfers.add(TransferGroup(
+      date: m.createdAt,
+      productId: m.productId,
+      qty: (into?.delta ?? m.delta).abs(),
+      fromWarehouseId: out?.warehouseId,
+      toWarehouseId: into?.warehouseId,
+      reference: m.reference,
+      note: m.note,
+    ));
+  }
+
+  return <MovementEntry>[
+    for (final s in sales) SaleEntry(s),
+    for (final p in purchases)
+      if (p.status != PurchaseStatus.cancelled) PurchaseEntry(p),
+    for (final t in transfers) TransferEntry(t),
+  ]..sort((a, b) =>
+      (b.date ?? DateTime(1970)).compareTo(a.date ?? DateTime(1970)));
+});
+
 /// A single product's history: purchases, adjustments, transfers and sales
 /// (ML + local, incl. multi-item), merged into one newest-first timeline.
 /// ML-origin ledger entries are omitted because the sale itself already

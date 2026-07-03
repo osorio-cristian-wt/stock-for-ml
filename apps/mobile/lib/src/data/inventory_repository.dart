@@ -109,6 +109,18 @@ class InventoryRepository {
         .map((rows) => rows.map(StockMovement.fromJson).toList());
   }
 
+  /// Realtime transfer movements (both legs of every transfer, newest first)
+  /// — feeds the unified Movimientos tab, which collapses each pair.
+  Stream<List<StockMovement>> watchTransfers({int limit = 200}) {
+    return _client
+        .from('stock_movements')
+        .stream(primaryKey: ['id'])
+        .eq('reason', 'transfer')
+        .order('created_at')
+        .limit(limit)
+        .map((rows) => rows.map(StockMovement.fromJson).toList());
+  }
+
   Future<List<ProductCategory>> categories() async {
     final rows = await _client.from('product_categories').select().order('name');
     return rows.map<ProductCategory>((r) => ProductCategory.fromJson(r)).toList();
