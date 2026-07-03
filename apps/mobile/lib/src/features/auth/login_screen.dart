@@ -17,6 +17,7 @@ class LoginScreen extends ConsumerStatefulWidget {
 class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _email = TextEditingController();
   final _password = TextEditingController();
+  final _confirmPassword = TextEditingController();
   bool _obscure = true;
   bool _busy = false;
   bool _signUp = false;
@@ -26,14 +27,24 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   void dispose() {
     _email.dispose();
     _password.dispose();
+    _confirmPassword.dispose();
     super.dispose();
   }
 
   Future<void> _submit() async {
     final email = _email.text.trim();
     final password = _password.text;
+    final confirmPassword = _confirmPassword.text;
     if (email.isEmpty || password.isEmpty) {
       setState(() => _error = 'Completá email y contraseña.');
+      return;
+    }
+    if (_signUp && confirmPassword.isEmpty) {
+      setState(() => _error = 'Repetí la contraseña para crear la cuenta.');
+      return;
+    }
+    if (_signUp && password != confirmPassword) {
+      setState(() => _error = 'Las contraseñas no coinciden.');
       return;
     }
     setState(() {
@@ -130,6 +141,16 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       onPressed: () => setState(() => _obscure = !_obscure),
                     ),
                   ),
+                  if (_signUp) ...[
+                    const SizedBox(height: 14),
+                    _Field(
+                      label: 'Repetir contraseña',
+                      controller: _confirmPassword,
+                      hint: '••••••••••',
+                      obscure: _obscure,
+                      onSubmitted: (_) => _submit(),
+                    ),
+                  ],
                   if (_error != null) ...[
                     const SizedBox(height: 14),
                     Text(
@@ -167,6 +188,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           ? null
                           : () => setState(() {
                                 _signUp = !_signUp;
+                              _confirmPassword.clear();
                                 _error = null;
                               }),
                       child: Text(
