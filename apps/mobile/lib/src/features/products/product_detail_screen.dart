@@ -8,7 +8,6 @@ import '../../theme/app_colors.dart';
 import '../../ui/format.dart';
 import '../../ui/widgets/app_widgets.dart';
 import '../price_comparison/price_comparison_screen.dart';
-import '../sales/local_sale_sheet.dart';
 import '../stock_adjustment/stock_adjustment_sheet.dart';
 import '../stock_adjustment/transfer_sheet.dart';
 import 'product_form_screen.dart';
@@ -498,33 +497,15 @@ class _StockCard extends StatelessWidget {
               ],
             ),
           ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              FilledButton(
-                onPressed: () =>
-                    StockAdjustmentSheet.show(context, product: product),
-                style: FilledButton.styleFrom(
-                  minimumSize: const Size(0, 40),
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                ),
-                child: const Text('Ajustar stock'),
-              ),
-              const SizedBox(height: 8),
-              OutlinedButton.icon(
-                onPressed: product.currentStock > 0
-                    ? () => LocalSaleSheet.show(context, product: product)
-                    : null,
-                icon: const Icon(Icons.point_of_sale_rounded, size: 16),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: AppColors.primary,
-                  side: const BorderSide(color: AppColors.border),
-                  minimumSize: const Size(0, 40),
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                ),
-                label: const Text('Vender'),
-              ),
-            ],
+          // "Vender" vive en la pestaña Ventas (flujo carrito, como la compra).
+          FilledButton(
+            onPressed: () =>
+                StockAdjustmentSheet.show(context, product: product),
+            style: FilledButton.styleFrom(
+              minimumSize: const Size(0, 44),
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+            ),
+            child: const Text('Ajustar stock'),
           ),
         ],
       ),
@@ -771,7 +752,11 @@ class _HistoryCard extends ConsumerWidget {
                       color: AppColors.textMuted)),
               const SizedBox(height: 12),
               for (var i = 0; i < shown.length; i++) ...[
-                _HistoryRow(entry: shown[i], icon: _icon(shown[i].kind)),
+                _HistoryRow(
+                  entry: shown[i],
+                  icon: _icon(shown[i].kind),
+                  productId: productId,
+                ),
                 if (i != shown.length - 1)
                   const Padding(
                     padding: EdgeInsets.symmetric(vertical: 9),
@@ -787,47 +772,195 @@ class _HistoryCard extends ConsumerWidget {
 }
 
 class _HistoryRow extends StatelessWidget {
-  const _HistoryRow({required this.entry, required this.icon});
+  const _HistoryRow({
+    required this.entry,
+    required this.icon,
+    required this.productId,
+  });
 
   final ProductHistoryEntry entry;
   final IconData icon;
+  final String productId;
+
+  /// Subtítulo inmediato: la transferencia dice de qué depósito a cuál.
+  String? get _subtitle {
+    if (entry.kind == HistoryKind.transfer) {
+      return '${entry.fromWarehouse ?? '¿?'} → ${entry.toWarehouse ?? '¿?'}';
+    }
+    if (entry.reference != null) {
+      final r = entry.reference!;
+      return '#${r.length > 12 ? r.substring(0, 12) : r}';
+    }
+    return null;
+  }
 
   @override
   Widget build(BuildContext context) {
     final positive = entry.signedQty >= 0;
     final qtyText = '${positive ? '+' : '−'}${entry.signedQty.abs()} u';
-    return Row(
-      children: [
-        Icon(icon, size: 18, color: AppColors.textSecondary),
-        const SizedBox(width: 11),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+    return InkWell(
+      onTap: () => showModalBottomSheet<void>(
+        context: context,
+        builder: (_) =>
+            _HistoryDetailSheet(entry: entry, icon: icon, productId: productId),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: AppColors.textSecondary),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(entry.label,
+                    style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary)),
+                if (_subtitle != null)
+                  Text(_subtitle!,
+                      style: const TextStyle(
+                          fontSize: 11, color: AppColors.textMuted)),
+              ],
+            ),
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              Text(entry.label,
-                  style: const TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.textPrimary)),
-              if (entry.reference != null)
-                Text('#${entry.reference!.length > 12 ? entry.reference!.substring(0, 12) : entry.reference}',
-                    style: const TextStyle(fontSize: 11, color: AppColors.textMuted)),
+              Text(qtyText,
+                  style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: positive ? AppColors.primary : AppColors.danger)),
+              Text(Fmt.shortDate(entry.date),
+                  style: const TextStyle(fontSize: 11, color: AppColors.textMuted)),
             ],
           ),
-        ),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.end,
+          const SizedBox(width: 4),
+          const Icon(Icons.chevron_right, size: 16, color: AppColors.textFaint),
+        ],
+      ),
+    );
+  }
+}
+
+/// Detalle de una entrada del historial: precio de venta, depósitos de la
+/// transferencia, depósito del movimiento, nota; el costo de una compra se
+/// busca a demanda en purchase_items (no carga la consulta principal).
+class _HistoryDetailSheet extends ConsumerWidget {
+  const _HistoryDetailSheet({
+    required this.entry,
+    required this.icon,
+    required this.productId,
+  });
+
+  final ProductHistoryEntry entry;
+  final IconData icon;
+  final String productId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final e = entry;
+    final positive = e.signedQty >= 0;
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(22, 18, 22, 22),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(qtyText,
-                style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                    color: positive ? AppColors.primary : AppColors.danger)),
-            Text(Fmt.shortDate(entry.date),
-                style: const TextStyle(fontSize: 11, color: AppColors.textMuted)),
+            Row(
+              children: [
+                Icon(icon, size: 20, color: AppColors.primary),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(e.label,
+                      style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.textPrimary)),
+                ),
+                Text(Fmt.shortDate(e.date),
+                    style: const TextStyle(
+                        fontSize: 12, color: AppColors.textMuted)),
+              ],
+            ),
+            const SizedBox(height: 14),
+            _DetailRow(
+              label: 'Cantidad',
+              value: '${positive ? '+' : '−'}${e.signedQty.abs()} u.',
+            ),
+            if (e.unitPrice != null && e.unitPrice! > 0)
+              _DetailRow(
+                  label: 'Precio unitario', value: Fmt.ars(e.unitPrice!)),
+            if (e.total != null && e.total! > 0)
+              _DetailRow(label: 'Total', value: Fmt.ars(e.total!)),
+            if (e.kind == HistoryKind.transfer)
+              _DetailRow(
+                label: 'Depósitos',
+                value: '${e.fromWarehouse ?? '¿?'} → ${e.toWarehouse ?? '¿?'}',
+              )
+            else if (e.warehouseName != null)
+              _DetailRow(label: 'Depósito', value: e.warehouseName!),
+            if (e.kind == HistoryKind.purchase && e.reference != null)
+              // Costo de la línea de compra, buscado recién al abrir el detalle.
+              FutureBuilder<List<PurchaseItem>>(
+                future: ref
+                    .read(purchasesRepositoryProvider)
+                    .itemsFor(e.reference!),
+                builder: (context, snap) {
+                  final items = snap.data;
+                  if (items == null) return const SizedBox.shrink();
+                  final line = [
+                    for (final it in items)
+                      if (it.productId == productId && it.unitCost > 0) it,
+                  ];
+                  if (line.isEmpty) return const SizedBox.shrink();
+                  return _DetailRow(
+                    label: 'Costo de compra',
+                    value: '${Fmt.usd(line.first.unitCost)} c/u',
+                  );
+                },
+              ),
+            if (e.note != null && e.note!.isNotEmpty)
+              _DetailRow(label: 'Nota', value: e.note!),
+            if (e.reference != null)
+              _DetailRow(label: 'Referencia', value: '#${e.reference}'),
           ],
         ),
-      ],
+      ),
+    );
+  }
+}
+
+class _DetailRow extends StatelessWidget {
+  const _DetailRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 9),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 120,
+            child: Text(label,
+                style:
+                    const TextStyle(fontSize: 13, color: AppColors.textMuted)),
+          ),
+          Expanded(
+            child: Text(value,
+                style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary)),
+          ),
+        ],
+      ),
     );
   }
 }

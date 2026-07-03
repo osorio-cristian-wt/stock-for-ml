@@ -130,9 +130,11 @@ final customersProvider = FutureProvider<List<Customer>>((ref) {
   return ref.watch(customersRepositoryProvider).all();
 });
 
-/// A single product's history: purchases, adjustments, transfers and ML sales,
-/// merged into one newest-first timeline. ML-origin ledger entries are omitted
-/// because the sale itself already represents them.
+/// A single product's history: purchases, adjustments, transfers and sales
+/// (ML + local, incl. multi-item), merged into one newest-first timeline.
+/// ML-origin ledger entries are omitted because the sale itself already
+/// represents them; a transfer's two paired movements collapse into ONE
+/// entry that says from→to.
 enum HistoryKind { sale, purchase, adjustment, transfer, returned, initial, other }
 
 class ProductHistoryEntry {
@@ -142,6 +144,12 @@ class ProductHistoryEntry {
     required this.label,
     required this.signedQty,
     this.reference,
+    this.unitPrice,
+    this.total,
+    this.fromWarehouse,
+    this.toWarehouse,
+    this.warehouseName,
+    this.note,
   });
 
   final DateTime? date;
@@ -149,6 +157,16 @@ class ProductHistoryEntry {
   final String label;
   final int signedQty; // + into stock, − out of stock
   final String? reference;
+
+  /// Sale price per unit / total (when the entry comes from a sale).
+  final double? unitPrice;
+  final double? total;
+
+  /// Transfer route (both set) or the single warehouse the movement touched.
+  final String? fromWarehouse;
+  final String? toWarehouse;
+  final String? warehouseName;
+  final String? note;
 }
 
 /// Live stock ledger for one product; feeding the history from the realtime
@@ -162,38 +180,104 @@ final productMovementsProvider =
 final productHistoryProvider =
     FutureProvider.family<List<ProductHistoryEntry>, String>((ref, productId) async {
   final movements = await ref.watch(productMovementsProvider(productId).future);
-  final sales = (await ref.watch(salesRepositoryProvider).recent(limit: 200))
+  final warehouses =
+      ref.watch(warehousesStreamProvider).valueOrNull ?? const <Warehouse>[];
+  final whName = {for (final w in warehouses) w.id: w.name};
+  final salesRepo = ref.watch(salesRepositoryProvider);
+
+  // Sales that touched this product: legacy/single rows carry product_id;
+  // multi-item sales are found via their sale_items line.
+  final directSales = (await salesRepo.recent(limit: 200))
       .where((s) => s.productId == productId)
       .toList();
+  final lines = await salesRepo.itemsForProduct(productId);
+  final directIds = {for (final s in directSales) s.id};
+  final lineSaleIds = {
+    for (final l in lines)
+      if (!directIds.contains(l.saleId)) l.saleId,
+  };
+  final lineSales = {
+    for (final s in await salesRepo.byIds(lineSaleIds.toList())) s.id: s,
+  };
 
   final entries = <ProductHistoryEntry>[
-    for (final s in sales)
+    for (final s in directSales)
       ProductHistoryEntry(
         date: s.soldAt,
         kind: HistoryKind.sale,
         label: s.isLocal ? 'Venta local' : 'Venta ML',
         signedQty: -s.quantity,
-        reference: s.mlOrderId,
+        reference: s.mlOrderId ?? s.id,
+        unitPrice: s.unitPrice,
+        total: s.gross,
+        note: s.note,
       ),
+    for (final l in lines)
+      if (lineSales[l.saleId] case final Sale s)
+        ProductHistoryEntry(
+          date: s.soldAt,
+          kind: HistoryKind.sale,
+          label: s.isLocal ? 'Venta local' : 'Venta ML',
+          signedQty: -l.quantity,
+          reference: s.mlOrderId ?? s.id,
+          unitPrice: l.unitPrice,
+          total: l.lineTotal,
+          note: s.note,
+        ),
   ];
 
-  // A local sale writes both a sales row and a user-origin `sale` movement
-  // referencing it — keep only the sale entry to avoid double lines.
-  final localSaleIds = {for (final s in sales.where((s) => s.isLocal)) s.id};
+  // Every sale (single or multi-item) also writes ledger movements that the
+  // sale entry above already represents — skip those to avoid double lines.
+  final saleIds = {...directIds, ...lineSaleIds};
+
+  // Collapse a transfer's paired movements (−origen / +destino, same
+  // reference) into one entry that says from→to.
+  final seenTransfers = <String>{};
 
   for (final m in movements) {
     if (m.origin == StockOrigin.ml) continue; // represented by the sale itself
-    if (m.reason == StockReason.sale && localSaleIds.contains(m.reference)) {
+    if (m.reason == StockReason.sale &&
+        m.reference != null &&
+        saleIds.contains(m.reference)) {
       continue;
     }
+
+    if (m.reason == StockReason.transfer) {
+      final key = m.reference ?? m.id;
+      if (seenTransfers.contains(key)) continue;
+      seenTransfers.add(key);
+      final pair = [
+        for (final o in movements)
+          if (o.reason == StockReason.transfer && (o.reference ?? o.id) == key) o,
+      ];
+      StockMovement? out;
+      StockMovement? into;
+      for (final o in pair) {
+        if (o.delta < 0) out = o;
+        if (o.delta > 0) into = o;
+      }
+      entries.add(ProductHistoryEntry(
+        date: m.createdAt,
+        kind: HistoryKind.transfer,
+        label: 'Transferencia',
+        signedQty: into?.delta ?? m.delta,
+        reference: m.reference,
+        fromWarehouse:
+            out?.warehouseId == null ? null : whName[out!.warehouseId],
+        toWarehouse:
+            into?.warehouseId == null ? null : whName[into!.warehouseId],
+        note: m.note,
+      ));
+      continue;
+    }
+
     final (kind, label) = switch (m.reason) {
       StockReason.purchase ||
       StockReason.purchaseReceived =>
         (HistoryKind.purchase, 'Compra'),
-      // User-origin sale = sold outside ML (the sheet's "Venta" reason).
+      // User-origin sale = sold outside ML via the adjustment sheet.
       StockReason.sale => (HistoryKind.sale, 'Venta manual'),
       StockReason.adjustment => (HistoryKind.adjustment, 'Ajuste'),
-      StockReason.transfer => (HistoryKind.transfer, 'Transferencia'),
       StockReason.returned => (HistoryKind.returned, 'Devolución'),
       StockReason.initialSync => (HistoryKind.initial, 'Stock inicial'),
       StockReason.loss => (HistoryKind.other, 'Pérdida'),
@@ -205,6 +289,9 @@ final productHistoryProvider =
       label: label,
       signedQty: m.delta,
       reference: m.reference,
+      warehouseName:
+          m.warehouseId == null ? null : whName[m.warehouseId],
+      note: m.note,
     ));
   }
 

@@ -58,6 +58,15 @@ class _MovementsScreenState extends ConsumerState<MovementsScreen> {
     });
   }
 
+  /// "Volver atrás" del movimiento en curso: limpia ruta y cantidades.
+  void _reset() {
+    setState(() {
+      _fromId = null;
+      _toId = null;
+      _qty.clear();
+    });
+  }
+
   /// Reusa el escáner de compras: el código busca por SKU/GTIN entre los
   /// productos CON stock en el depósito de origen y suma +1 a su cantidad.
   Future<void> _scan(List<ProductStock> movable, Map<String, Product> products) async {
@@ -171,6 +180,14 @@ class _MovementsScreenState extends ConsumerState<MovementsScreen> {
                             fontWeight: FontWeight.w700,
                             color: AppColors.textPrimary)),
                   ),
+                  if (_fromId != null || _toId != null || _qty.isNotEmpty)
+                    TextButton.icon(
+                      onPressed: _reset,
+                      icon: const Icon(Icons.close, size: 16),
+                      style: TextButton.styleFrom(
+                          foregroundColor: AppColors.textSecondary),
+                      label: const Text('Cancelar'),
+                    ),
                   if (_ready)
                     IconButton(
                       tooltip: 'Escanear producto',

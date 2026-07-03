@@ -10,6 +10,7 @@ import '../../data/supabase_providers.dart';
 import '../../theme/app_colors.dart';
 import '../../ui/format.dart';
 import '../../ui/widgets/app_widgets.dart';
+import '../parties/party_form_sheet.dart';
 import '../products/product_form_screen.dart';
 import '../scan/code_scanner_screen.dart';
 import 'purchase_scan_screen.dart';
@@ -968,25 +969,12 @@ class _SupplierSheet extends ConsumerStatefulWidget {
 }
 
 class _SupplierSheetState extends ConsumerState<_SupplierSheet> {
-  final _name = TextEditingController();
-  final _legalName = TextEditingController();
-  final _taxId = TextEditingController();
-  final _phone = TextEditingController();
-  bool _showExtra = false;
   bool _busy = false;
 
-  @override
-  void dispose() {
-    _name.dispose();
-    _legalName.dispose();
-    _taxId.dispose();
-    _phone.dispose();
-    super.dispose();
-  }
-
+  /// Alta con la ventana COMPARTIDA de proveedores/clientes (mismo diseño).
   Future<void> _create() async {
-    final name = _name.text.trim();
-    if (name.isEmpty) return;
+    final data = await PartyFormSheet.show(context, title: 'Nuevo proveedor');
+    if (data == null || !mounted) return;
     setState(() => _busy = true);
     final userId = ref.read(supabaseClientProvider).auth.currentUser?.id ?? '';
     try {
@@ -994,12 +982,11 @@ class _SupplierSheetState extends ConsumerState<_SupplierSheet> {
             Supplier(
               id: '',
               profileId: userId,
-              name: name,
-              legalName: _legalName.text.trim().isEmpty
-                  ? null
-                  : _legalName.text.trim(),
-              taxId: _taxId.text.trim().isEmpty ? null : _taxId.text.trim(),
-              phone: _phone.text.trim().isEmpty ? null : _phone.text.trim(),
+              name: data.name,
+              legalName: data.legalName,
+              taxId: data.taxId,
+              phone: data.phone,
+              email: data.email,
             ),
           );
       ref.invalidate(suppliersProvider);
@@ -1008,7 +995,9 @@ class _SupplierSheetState extends ConsumerState<_SupplierSheet> {
       setState(() => _busy = false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('No se pudo crear. $e')),
+          SnackBar(
+              content:
+                  Text('No se pudo crear. ${e.toString().split('\n').first}')),
         );
       }
     }
@@ -1104,52 +1093,15 @@ class _SupplierSheetState extends ConsumerState<_SupplierSheet> {
                 const SizedBox(height: 8),
               ],
               const SizedBox(height: 6),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _name,
-                      style: const TextStyle(color: AppColors.textPrimary, fontSize: 14),
-                      decoration: const InputDecoration(hintText: 'Nuevo proveedor…'),
-                      onSubmitted: (_) => _create(),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  FilledButton(
-                    onPressed: _busy ? null : _create,
-                    child: const Text('Crear'),
-                  ),
-                ],
+              OutlinedButton.icon(
+                onPressed: _busy ? null : _create,
+                icon: const Icon(Icons.add_business_outlined, size: 18),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.primary,
+                  side: const BorderSide(color: AppColors.border),
+                ),
+                label: const Text('Nuevo proveedor'),
               ),
-              if (!_showExtra)
-                TextButton.icon(
-                  onPressed: () => setState(() => _showExtra = true),
-                  icon: const Icon(Icons.expand_more, size: 18),
-                  style: TextButton.styleFrom(
-                      foregroundColor: AppColors.textSecondary),
-                  label: const Text('Datos extra (razón social, CUIT…)'),
-                )
-              else ...[
-                const SizedBox(height: 10),
-                TextField(
-                  controller: _legalName,
-                  style: const TextStyle(color: AppColors.textPrimary, fontSize: 14),
-                  decoration: const InputDecoration(hintText: 'Razón social'),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: _taxId,
-                  style: const TextStyle(color: AppColors.textPrimary, fontSize: 14),
-                  decoration: const InputDecoration(hintText: 'CUIT / CUIL'),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: _phone,
-                  keyboardType: TextInputType.phone,
-                  style: const TextStyle(color: AppColors.textPrimary, fontSize: 14),
-                  decoration: const InputDecoration(hintText: 'Teléfono'),
-                ),
-              ],
             ],
           ),
         ),

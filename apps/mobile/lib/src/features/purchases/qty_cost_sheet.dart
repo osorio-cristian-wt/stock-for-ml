@@ -3,8 +3,9 @@ import 'package:flutter/services.dart';
 
 import '../../theme/app_colors.dart';
 
-/// Quantity + unit-cost editor shared by the purchase flows (search sheet,
-/// line editing and the continuous scanner).
+/// Quantity + unit-price editor shared by the purchase AND local-sale flows
+/// (search sheet, line editing and the continuous scanners). The labels adapt
+/// via [priceLabel]/[confirmLabel] (costo en compras, precio en ventas).
 class QtyCostSheet extends StatefulWidget {
   const QtyCostSheet({
     super.key,
@@ -13,12 +14,14 @@ class QtyCostSheet extends StatefulWidget {
     required this.initialCost,
     required this.onConfirm,
     this.confirmLabel = 'Agregar a la compra',
+    this.priceLabel = 'Costo unitario',
   });
 
   final String title;
   final int initialQty;
   final double initialCost;
   final String confirmLabel;
+  final String priceLabel;
   final Future<void> Function(int qty, double cost) onConfirm;
 
   @override
@@ -113,8 +116,8 @@ class _QtyCostSheetState extends State<QtyCostSheet> {
                 ],
               ),
               const SizedBox(height: 16),
-              const Text('Costo unitario',
-                  style: TextStyle(fontSize: 13, color: AppColors.textMuted)),
+              Text(widget.priceLabel,
+                  style: const TextStyle(fontSize: 13, color: AppColors.textMuted)),
               const SizedBox(height: 8),
               TextField(
                 controller: _cost,
