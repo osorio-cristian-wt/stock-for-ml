@@ -6,6 +6,7 @@ import '../../data/queries.dart';
 import '../../theme/app_colors.dart';
 import '../../ui/widgets/app_widgets.dart';
 import '../scan/scan_screen.dart';
+import 'product_comparison_screen.dart';
 import 'product_detail_screen.dart';
 import 'product_form_screen.dart';
 import 'product_tile.dart';
@@ -88,6 +89,17 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
                             fontWeight: FontWeight.w700,
                             color: AppColors.textPrimary)),
                   ),
+                  IconButton(
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const ProductComparisonScreen(),
+                      ),
+                    ),
+                    tooltip: 'Comparativa',
+                    icon: const Icon(Icons.leaderboard_outlined,
+                        color: AppColors.textSecondary, size: 22),
+                  ),
+                  const SizedBox(width: 4),
                   _AddButton(onTap: _openAdd),
                 ],
               ),

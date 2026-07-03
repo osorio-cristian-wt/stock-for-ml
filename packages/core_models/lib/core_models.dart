@@ -8,6 +8,7 @@ export 'src/alert.dart';
 export 'src/barcode.dart';
 export 'src/economics.dart';
 export 'src/fx_rate.dart';
+export 'src/listing_variation.dart';
 export 'src/ml_listing.dart';
 export 'src/product.dart';
 export 'src/product_category.dart';

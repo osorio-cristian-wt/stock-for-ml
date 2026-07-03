@@ -6,6 +6,7 @@ import '../../data/queries.dart';
 import '../../data/supabase_providers.dart';
 import '../../theme/app_colors.dart';
 import '../../ui/widgets/app_widgets.dart';
+import 'warehouse_detail_screen.dart';
 
 /// Depósitos. Manage warehouses: which one is the default (dispatch) warehouse
 /// ML discounts from, and whether each one counts toward the published stock.
@@ -93,7 +94,8 @@ class _WarehousesScreenState extends ConsumerState<WarehousesScreen> {
               children: [
                 const Text(
                   'El depósito principal es del que ML descuenta al despachar. '
-                  'Los depósitos "vendibles" suman al stock publicado en ML.',
+                  'Los depósitos "vendibles" suman al stock publicado en ML. '
+                  'Tocá un depósito para ver su stock, transferir y su historial.',
                   style: TextStyle(fontSize: 12, color: AppColors.textMuted, height: 1.4),
                 ),
                 if (_error != null) ...[
@@ -119,7 +121,7 @@ class _WarehousesScreenState extends ConsumerState<WarehousesScreen> {
   }
 }
 
-class _WarehouseCard extends StatelessWidget {
+class _WarehouseCard extends ConsumerWidget {
   const _WarehouseCard({
     required this.warehouse,
     required this.onSetDefault,
@@ -131,9 +133,15 @@ class _WarehouseCard extends StatelessWidget {
   final VoidCallback onToggleSellable;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final w = warehouse;
+    final totals = ref.watch(warehouseTotalsProvider)[w.id];
     return SurfaceCard(
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => WarehouseDetailScreen(warehouseId: w.id),
+        ),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -153,11 +161,19 @@ class _WarehouseCard extends StatelessWidget {
                             fontSize: 15,
                             fontWeight: FontWeight.w600,
                             color: AppColors.textPrimary)),
-                    Text(w.code,
-                        style: const TextStyle(fontSize: 12, color: AppColors.textMuted)),
+                    Text(
+                      totals == null
+                          ? w.code
+                          : '${w.code} · ${totals.products} producto'
+                              '${totals.products == 1 ? '' : 's'} · '
+                              '${totals.available} disp.',
+                      style: const TextStyle(
+                          fontSize: 12, color: AppColors.textMuted),
+                    ),
                   ],
                 ),
               ),
+              const Icon(Icons.chevron_right, color: AppColors.textFaint),
             ],
           ),
           const SizedBox(height: 10),

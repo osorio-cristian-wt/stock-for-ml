@@ -78,6 +78,37 @@ class InventoryRepository {
         .map((rows) => rows.map(ProductStock.fromJson).toList());
   }
 
+  /// Realtime stock rows of one warehouse (drives the per-warehouse view).
+  Stream<List<ProductStock>> watchStockInWarehouse(String warehouseId) {
+    return _client
+        .from('product_stock')
+        .stream(primaryKey: ['product_id', 'warehouse_id'])
+        .eq('warehouse_id', warehouseId)
+        .map((rows) => rows.map(ProductStock.fromJson).toList());
+  }
+
+  /// Realtime stock rows of every warehouse (totals in the warehouses list).
+  Stream<List<ProductStock>> watchAllStock() {
+    return _client
+        .from('product_stock')
+        .stream(primaryKey: ['product_id', 'warehouse_id'])
+        .map((rows) => rows.map(ProductStock.fromJson).toList());
+  }
+
+  /// Realtime ledger of one warehouse (newest first) — the warehouse history.
+  Stream<List<StockMovement>> watchMovementsInWarehouse(
+    String warehouseId, {
+    int limit = 50,
+  }) {
+    return _client
+        .from('stock_movements')
+        .stream(primaryKey: ['id'])
+        .eq('warehouse_id', warehouseId)
+        .order('created_at')
+        .limit(limit)
+        .map((rows) => rows.map(StockMovement.fromJson).toList());
+  }
+
   Future<List<ProductCategory>> categories() async {
     final rows = await _client.from('product_categories').select().order('name');
     return rows.map<ProductCategory>((r) => ProductCategory.fromJson(r)).toList();

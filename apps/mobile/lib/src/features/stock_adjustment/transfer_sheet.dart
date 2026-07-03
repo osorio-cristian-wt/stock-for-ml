@@ -9,15 +9,23 @@ import '../../theme/app_colors.dart';
 /// Transfer stock between two warehouses (internal control). Writes two paired
 /// on_hand movements via the `transfer_stock` RPC.
 class TransferSheet extends ConsumerStatefulWidget {
-  const TransferSheet({super.key, required this.product});
+  const TransferSheet({super.key, required this.product, this.fromWarehouseId});
 
   final Product product;
 
-  static Future<void> show(BuildContext context, {required Product product}) {
+  /// Pre-selected origin (e.g. when launched from a warehouse's own view).
+  final String? fromWarehouseId;
+
+  static Future<void> show(
+    BuildContext context, {
+    required Product product,
+    String? fromWarehouseId,
+  }) {
     return showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      builder: (_) => TransferSheet(product: product),
+      builder: (_) =>
+          TransferSheet(product: product, fromWarehouseId: fromWarehouseId),
     );
   }
 
@@ -31,6 +39,12 @@ class _TransferSheetState extends ConsumerState<TransferSheet> {
   int _qty = 1;
   bool _busy = false;
   String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _fromId = widget.fromWarehouseId;
+  }
 
   Future<void> _confirm() async {
     if (_fromId == null || _toId == null) {

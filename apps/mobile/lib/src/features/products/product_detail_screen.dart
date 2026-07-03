@@ -95,6 +95,7 @@ class _Body extends StatelessWidget {
         const SizedBox(height: 12),
         _StockCard(product: product),
         _WarehouseStockCard(product: product),
+        if (published) _VariationsCard(listingId: economics!.listingId),
         _HistoryCard(productId: product.id),
         if (published) ...[
           const SizedBox(height: 12),
@@ -510,8 +511,10 @@ class _StockCard extends StatelessWidget {
   }
 }
 
-/// Per-warehouse stock breakdown + transfer action. Reactive to the live
-/// product_stock stream. Hidden when there's nothing useful to show.
+/// Per-warehouse stock breakdown + transfer action. Always lists EVERY
+/// warehouse (with 0 when the product has no stock there) so the detail says
+/// exactly how the stock is distributed. Reactive to the live product_stock
+/// stream; hidden only while the user has no warehouses at all.
 class _WarehouseStockCard extends ConsumerWidget {
   const _WarehouseStockCard({required this.product});
 
@@ -524,15 +527,20 @@ class _WarehouseStockCard extends ConsumerWidget {
             const <ProductStock>[];
     final warehouses =
         ref.watch(warehousesStreamProvider).valueOrNull ?? const <Warehouse>[];
-    if (rows.isEmpty && warehouses.length < 2) return const SizedBox.shrink();
+    if (warehouses.isEmpty) return const SizedBox.shrink();
 
-    final byId = {for (final w in warehouses) w.id: w};
+    final byWarehouse = {for (final s in rows) s.warehouseId: s};
     final canTransfer = warehouses.length > 1;
-    // Show meaningful buckets first (where there is any quantity).
-    final shown = rows
-        .where((s) => s.onHand != 0 || s.reserved != 0 || s.incoming != 0)
-        .toList()
-      ..sort((a, b) => b.available.compareTo(a.available));
+    // One row per warehouse (default/principal first — the stream already
+    // sorts that way), falling back to zeroed buckets.
+    final shown = [
+      for (final w in warehouses)
+        (
+          w,
+          byWarehouse[w.id] ??
+              ProductStock(productId: product.id, warehouseId: w.id),
+        ),
+    ];
 
     return Column(
       children: [
@@ -565,14 +573,10 @@ class _WarehouseStockCard extends ConsumerWidget {
                 ],
               ),
               const SizedBox(height: 10),
-              if (shown.isEmpty)
-                const Text('Sin stock cargado en ningún depósito.',
-                    style: TextStyle(fontSize: 13, color: AppColors.textMuted))
-              else
-                for (final s in shown) ...[
-                  _WarehouseStockRow(stock: s, warehouse: byId[s.warehouseId]),
-                  const SizedBox(height: 8),
-                ],
+              for (final (w, s) in shown) ...[
+                _WarehouseStockRow(stock: s, warehouse: w),
+                const SizedBox(height: 8),
+              ],
             ],
           ),
         ),
@@ -582,19 +586,15 @@ class _WarehouseStockCard extends ConsumerWidget {
 }
 
 class _WarehouseStockRow extends StatelessWidget {
-  const _WarehouseStockRow({required this.stock, this.warehouse});
+  const _WarehouseStockRow({required this.stock, required this.warehouse});
 
   final ProductStock stock;
-  final Warehouse? warehouse;
+  final Warehouse warehouse;
 
   @override
   Widget build(BuildContext context) {
-    final extras = <String>[
-      if (stock.reserved != 0) 'reservado ${stock.reserved}',
-      if (stock.incoming != 0) 'en camino ${stock.incoming}',
-    ];
-    final name = (warehouse?.name ?? 'Depósito') +
-        (warehouse?.isDefault == true ? ' · principal' : '');
+    final name =
+        warehouse.name + (warehouse.isDefault ? ' · principal' : '');
     return Row(
       children: [
         const Icon(Icons.warehouse_outlined, size: 16, color: AppColors.textFaint),
@@ -608,17 +608,105 @@ class _WarehouseStockRow extends StatelessWidget {
                       fontSize: 13,
                       color: AppColors.textBody,
                       fontWeight: FontWeight.w500)),
-              if (extras.isNotEmpty)
-                Text(extras.join(' · '),
-                    style: const TextStyle(fontSize: 11, color: AppColors.textMuted)),
+              if (stock.reserved != 0 || stock.incoming != 0) ...[
+                const SizedBox(height: 3),
+                Wrap(
+                  spacing: 5,
+                  runSpacing: 4,
+                  children: [
+                    if (stock.reserved != 0)
+                      TagChip('Reservado ${stock.reserved}',
+                          color: AppColors.warning,
+                          background: AppColors.warningSoft),
+                    if (stock.incoming != 0)
+                      TagChip('En camino ${stock.incoming}'),
+                  ],
+                ),
+              ],
             ],
           ),
         ),
         Text('${stock.available} disp.',
-            style: const TextStyle(
+            style: TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.w700,
-                color: AppColors.textPrimary)),
+                color: stock.available > 0
+                    ? AppColors.textPrimary
+                    : AppColors.textMuted)),
+      ],
+    );
+  }
+}
+
+/// ML-side stock per variation (talle/color/…) of the linked publication
+/// (RF-07). Mirrored from ML by the sync; the app does not push item-level
+/// stock to variation listings, so this breakdown is informative. Hidden for
+/// simple listings.
+class _VariationsCard extends ConsumerWidget {
+  const _VariationsCard({required this.listingId});
+
+  final String listingId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final variations =
+        ref.watch(listingVariationsProvider(listingId)).valueOrNull ??
+            const <ListingVariation>[];
+    if (variations.isEmpty) return const SizedBox.shrink();
+
+    return Column(
+      children: [
+        const SizedBox(height: 12),
+        SurfaceCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Variaciones (ML)',
+                  style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      color: AppColors.textMuted)),
+              const SizedBox(height: 10),
+              for (final v in variations) ...[
+                Row(
+                  children: [
+                    const Icon(Icons.style_outlined,
+                        size: 16, color: AppColors.textFaint),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(v.label,
+                              style: const TextStyle(
+                                  fontSize: 13,
+                                  color: AppColors.textBody,
+                                  fontWeight: FontWeight.w500)),
+                          if (v.price != null)
+                            Text(Fmt.ars(v.price!),
+                                style: const TextStyle(
+                                    fontSize: 11, color: AppColors.textMuted)),
+                        ],
+                      ),
+                    ),
+                    Text('${v.availableQuantity} u.',
+                        style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.textPrimary)),
+                  ],
+                ),
+                const SizedBox(height: 8),
+              ],
+              const Text(
+                'El stock por variación se administra en MercadoLibre; la app '
+                'no lo empuja automáticamente.',
+                style: TextStyle(
+                    fontSize: 11, color: AppColors.textMuted, height: 1.4),
+              ),
+            ],
+          ),
+        ),
       ],
     );
   }

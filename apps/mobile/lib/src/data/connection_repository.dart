@@ -1,3 +1,4 @@
+import 'package:core_models/core_models.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 /// A linked MercadoLibre account (row of `public.ml_accounts`).
@@ -61,6 +62,16 @@ class ConnectionRepository {
   /// Kicks off the first import (publications) after linking. Best-effort.
   Future<void> triggerInitialSync() async {
     await _client.functions.invoke('sync-items');
+  }
+
+  /// Live ML-side stock per variation of a listing (empty for simple
+  /// listings). Mirrored by `upsertItem`; managed in ML, shown for visibility.
+  Stream<List<ListingVariation>> watchListingVariations(String listingId) {
+    return _client
+        .from('listing_variations')
+        .stream(primaryKey: ['id'])
+        .eq('ml_listing_id', listingId)
+        .map((rows) => [for (final r in rows) ListingVariation.fromJson(r)]);
   }
 
   /// Links an existing ML publication (e.g. "MLA123") to an internal product.

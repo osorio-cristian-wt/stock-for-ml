@@ -81,4 +81,34 @@ void main() {
     expect(a.type, AlertType.outOfStock);
     expect(a.currentQty, 0);
   });
+
+  test('ListingVariation.fromJson builds a label from attribute values', () {
+    final v = ListingVariation.fromJson({
+      'id': 'v1',
+      'profile_id': 'u1',
+      'ml_listing_id': 'l1',
+      'ml_variation_id': '181234567',
+      'attributes': [
+        {'id': 'COLOR', 'name': 'Color', 'value_name': 'Rojo'},
+        {'id': 'SIZE', 'name': 'Talle', 'value_name': 'XL'},
+      ],
+      'price': '15999.5',
+      'available_quantity': 4,
+    });
+    expect(v.label, 'Rojo · XL');
+    expect(v.price, 15999.5);
+    expect(v.availableQuantity, 4);
+  });
+
+  test('ListingVariation.label falls back to the ML id', () {
+    final v = ListingVariation.fromJson({
+      'id': 'v1',
+      'profile_id': 'u1',
+      'ml_listing_id': 'l1',
+      'ml_variation_id': '99',
+    });
+    expect(v.attributes, isEmpty);
+    expect(v.label, 'Variación 99');
+    expect(v.availableQuantity, 0);
+  });
 }

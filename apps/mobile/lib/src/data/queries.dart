@@ -58,6 +58,57 @@ final stockByWarehouseProvider =
   return ref.watch(inventoryRepositoryProvider).watchStockFor(productId);
 });
 
+/// Stock rows inside one warehouse, realtime (per-warehouse view).
+final stockInWarehouseProvider =
+    StreamProvider.family<List<ProductStock>, String>((ref, warehouseId) {
+  return ref
+      .watch(inventoryRepositoryProvider)
+      .watchStockInWarehouse(warehouseId);
+});
+
+/// Live movement ledger of one warehouse (newest first) — its history tab.
+final warehouseMovementsProvider =
+    StreamProvider.family<List<StockMovement>, String>((ref, warehouseId) {
+  return ref
+      .watch(inventoryRepositoryProvider)
+      .watchMovementsInWarehouse(warehouseId);
+});
+
+/// Every stock row of the user, realtime — feeds the per-warehouse totals.
+final allStockStreamProvider = StreamProvider<List<ProductStock>>((ref) {
+  return ref.watch(inventoryRepositoryProvider).watchAllStock();
+});
+
+/// Totals per warehouse for the Depósitos list: how many products live there
+/// and how many units are available (on_hand − reserved).
+class WarehouseTotals {
+  const WarehouseTotals({this.products = 0, this.available = 0});
+
+  final int products;
+  final int available;
+}
+
+final warehouseTotalsProvider = Provider<Map<String, WarehouseTotals>>((ref) {
+  final rows =
+      ref.watch(allStockStreamProvider).valueOrNull ?? const <ProductStock>[];
+  final totals = <String, ({int products, int available})>{};
+  for (final s in rows) {
+    final hasAny = s.onHand != 0 || s.reserved != 0 || s.incoming != 0;
+    final t = totals[s.warehouseId] ?? (products: 0, available: 0);
+    totals[s.warehouseId] = (
+      products: t.products + (hasAny ? 1 : 0),
+      available: t.available + s.available,
+    );
+  }
+  return {
+    for (final e in totals.entries)
+      e.key: WarehouseTotals(
+        products: e.value.products,
+        available: e.value.available,
+      ),
+  };
+});
+
 /// Live list of purchases (newest first).
 final purchasesStreamProvider = StreamProvider<List<Purchase>>((ref) {
   return ref.watch(purchasesRepositoryProvider).watchAll();
@@ -127,6 +178,8 @@ final productHistoryProvider =
       StockReason.purchase ||
       StockReason.purchaseReceived =>
         (HistoryKind.purchase, 'Compra'),
+      // User-origin sale = sold outside ML (the sheet's "Venta" reason).
+      StockReason.sale => (HistoryKind.sale, 'Venta manual'),
       StockReason.adjustment => (HistoryKind.adjustment, 'Ajuste'),
       StockReason.transfer => (HistoryKind.transfer, 'Transferencia'),
       StockReason.returned => (HistoryKind.returned, 'Devolución'),
@@ -146,6 +199,75 @@ final productHistoryProvider =
   entries.sort((a, b) =>
       (b.date ?? DateTime(1970)).compareTo(a.date ?? DateTime(1970)));
   return entries;
+});
+
+/// ML-side stock per variation of a listing (RF-07). Empty for simple
+/// listings; the detail screen shows the breakdown when there are rows.
+final listingVariationsProvider =
+    StreamProvider.family<List<ListingVariation>, String>((ref, listingId) {
+  return ref
+      .watch(connectionRepositoryProvider)
+      .watchListingVariations(listingId);
+});
+
+/// One row of the own-products comparison (RF-19): profitability, margin,
+/// markup and rotation (units sold in the last 30 days).
+class ProductComparisonRow {
+  const ProductComparisonRow({
+    required this.productId,
+    required this.title,
+    this.imageUrl,
+    this.marginPct,
+    this.markupPct,
+    this.netProfit,
+    required this.soldUnits30d,
+    required this.currentStock,
+  });
+
+  final String productId;
+  final String title;
+  final String? imageUrl;
+  final double? marginPct;
+  final double? markupPct;
+  final double? netProfit;
+  final int soldUnits30d;
+  final int currentStock;
+
+  bool get published => marginPct != null || netProfit != null;
+}
+
+/// RF-19 — compares own products side by side. Economics come from the
+/// server view (published products only); rotation counts non-cancelled ML
+/// sale units over the last 30 days.
+final productComparisonProvider =
+    FutureProvider<List<ProductComparisonRow>>((ref) async {
+  final products = await ref.watch(productsStreamProvider.future);
+  final economics = ref.watch(economicsByProductProvider);
+  final sales = await ref.watch(salesRepositoryProvider).recent(limit: 500);
+
+  final cutoff = DateTime.now().subtract(const Duration(days: 30));
+  final sold = <String, int>{};
+  for (final s in sales) {
+    final pid = s.productId;
+    if (pid == null || s.status == 'cancelled') continue;
+    final at = s.soldAt;
+    if (at == null || at.isBefore(cutoff)) continue;
+    sold[pid] = (sold[pid] ?? 0) + s.quantity;
+  }
+
+  return [
+    for (final p in products)
+      ProductComparisonRow(
+        productId: p.id,
+        title: p.title,
+        imageUrl: p.imageUrl,
+        marginPct: economics[p.id]?.marginPct,
+        markupPct: economics[p.id]?.markupPct,
+        netProfit: economics[p.id]?.netProfit,
+        soldUnits30d: sold[p.id] ?? 0,
+        currentStock: p.currentStock,
+      ),
+  ];
 });
 
 /// Unread alert count for the header bell badge.
