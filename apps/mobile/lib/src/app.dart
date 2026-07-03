@@ -8,6 +8,7 @@ import 'data/queries.dart';
 import 'data/supabase_providers.dart';
 import 'features/auth/login_screen.dart';
 import 'features/connect_ml/connect_ml_screen.dart';
+import 'features/connect_ml/import_prompt.dart';
 import 'features/shell/home_shell.dart';
 import 'theme/app_colors.dart';
 import 'theme/app_theme.dart';
@@ -62,6 +63,11 @@ class _StockForMlAppState extends ConsumerState<StockForMlApp> {
         ..showSnackBar(const SnackBar(
           content: Text('✓ Cuenta de MercadoLibre conectada'),
         ));
+      // First ML login: take the user straight into importing publications.
+      final ctx = _navKey.currentState?.context;
+      if (ctx != null && ctx.mounted) {
+        offerInitialImport(ctx, ref);
+      }
     } else if (status == 'error') {
       final message = uri.queryParameters['message'] ?? 'No se pudo conectar.';
       _messengerKey.currentState

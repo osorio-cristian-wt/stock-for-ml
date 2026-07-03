@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -7,6 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../data/queries.dart';
 import '../../data/supabase_providers.dart';
 import '../../theme/app_colors.dart';
+import 'import_prompt.dart';
 
 /// Screen 02 · Conectar cuenta ML (OAuth 2.0 + PKCE). The app asks the backend
 /// for an authorize URL, opens it in the browser, and then polls `ml_accounts`
@@ -52,8 +51,9 @@ class _ConnectMlScreenState extends ConsumerState<ConnectMlScreen> {
     ref.invalidate(mlAccountProvider);
     final account = await ref.read(mlAccountProvider.future);
     if (account != null) {
-      // Best-effort first import of publications.
-      unawaited(ref.read(connectionRepositoryProvider).triggerInitialSync());
+      if (!mounted) return;
+      // First ML login: lead straight into importing publications.
+      await offerInitialImport(context, ref);
       if (!mounted) return;
       if (widget.standalone) {
         Navigator.of(context).pop(true);
