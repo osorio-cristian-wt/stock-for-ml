@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/queries.dart';
 import '../../data/supabase_providers.dart';
 import '../../theme/app_colors.dart';
+import '../../ui/errors.dart';
 
 /// Transfer stock between two warehouses (internal control). Writes two paired
 /// on_hand movements via the `transfer_stock` RPC.
@@ -75,7 +76,7 @@ class _TransferSheetState extends ConsumerState<TransferSheet> {
     } catch (e) {
       setState(() {
         _busy = false;
-        _error = 'No se pudo transferir. ${e.toString().split('\n').first}';
+        _error = 'No se pudo transferir. ${AppErrors.friendly(e)}';
       });
     }
   }

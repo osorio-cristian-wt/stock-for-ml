@@ -1,5 +1,7 @@
 // POST /refresh-tokens  (cron, service-role)
-// Refreshes every ML token expiring within the next hour, rotating refresh tokens.
+// Refreshes every ML token expiring within the next 75 minutes, rotating
+// refresh tokens. The cron runs hourly, so the threshold must exceed the
+// interval or a token could expire between two runs.
 import { handlePreflight, jsonResponse } from "../_shared/cors.ts";
 import { mlConfig } from "../_shared/env.ts";
 import { createAdminClient } from "../_shared/supabaseAdmin.ts";
@@ -12,7 +14,7 @@ Deno.serve(async (req) => {
 
   const admin = createAdminClient();
   const cfg = mlConfig();
-  const threshold = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  const threshold = new Date(Date.now() + 75 * 60 * 1000).toISOString();
 
   const { data: rows, error } = await admin
     .from("ml_credentials")

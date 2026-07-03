@@ -89,4 +89,52 @@ class ConnectionRepository {
       throw StateError(data?['error']?.toString() ?? 'No se pudo vincular.');
     }
   }
+
+  /// Filas de la cola de push a ML que NO llegaron (status=error tras agotar
+  /// reintentos, p. ej. sin conexión) o siguen pendientes hace rato. Antes
+  /// esto fallaba en silencio; ahora alimenta el aviso del Inicio.
+  Future<List<StockPushIssue>> pushIssues() async {
+    final rows = await _client
+        .from('stock_push_queue')
+        .select('product_id, status, attempts, error, enqueued_at')
+        .inFilter('status', ['error', 'pending'])
+        .order('enqueued_at', ascending: true);
+    final now = DateTime.now();
+    return [
+      for (final r in rows)
+        if (r['status'] == 'error' ||
+            // pending "viejo" (> 5 min) = el cron no está pudiendo drenarla.
+            now
+                    .difference(DateTime.tryParse('${r['enqueued_at']}') ?? now)
+                    .inMinutes >=
+                5)
+          StockPushIssue(
+            productId: r['product_id'] as String,
+            status: r['status'] as String,
+            attempts: (r['attempts'] as num?)?.toInt() ?? 0,
+            error: r['error'] as String?,
+          ),
+    ];
+  }
+
+  /// Re-encola las filas en error y dispara el drenado de la cola.
+  Future<void> retryPush() async {
+    await _client.rpc('retry_stock_push');
+    await _client.functions.invoke('push-stock');
+  }
+}
+
+/// Un producto cuyo stock no pudo subirse a ML (o está demorado).
+class StockPushIssue {
+  const StockPushIssue({
+    required this.productId,
+    required this.status,
+    required this.attempts,
+    this.error,
+  });
+
+  final String productId;
+  final String status;
+  final int attempts;
+  final String? error;
 }

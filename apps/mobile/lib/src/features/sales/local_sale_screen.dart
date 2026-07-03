@@ -3,9 +3,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/queries.dart';
+import '../../data/sales_repository.dart';
 import '../../data/supabase_providers.dart';
 import '../../theme/app_colors.dart';
+import '../../ui/errors.dart';
 import '../../ui/format.dart';
+import '../../ui/widgets/add_products_card.dart';
 import '../../ui/widgets/app_widgets.dart';
 import '../parties/party_form_sheet.dart';
 import '../purchases/qty_cost_sheet.dart';
@@ -13,9 +16,11 @@ import 'sale_scan_screen.dart';
 
 /// Nueva venta local — MISMO flujo que la compra: carrito de varios productos
 /// (escáner continuo o búsqueda), cliente opcional (padrón propio o "sin
-/// cliente") y depósito. Al confirmar, `create_local_sale` escribe todo en
-/// UNA transacción: valida stock por línea y descuenta; si algo no alcanza,
-/// error y no queda nada a medias.
+/// cliente") y depósito POR LÍNEA (una venta puede sacar stock de varios
+/// depósitos). Al confirmar, `create_local_sale` escribe todo en UNA
+/// transacción: valida disponible por (producto, depósito) y descuenta; si
+/// algo no alcanza, error y no queda nada a medias. El id de la venta se
+/// genera acá para que un reintento tras un corte de red no duplique.
 class LocalSaleScreen extends ConsumerStatefulWidget {
   const LocalSaleScreen({super.key});
 
@@ -30,11 +35,17 @@ class LocalSaleScreen extends ConsumerStatefulWidget {
 }
 
 class _CartLine {
-  _CartLine({required this.product, required this.qty, required this.price});
+  _CartLine({
+    required this.product,
+    required this.qty,
+    required this.price,
+    required this.warehouseId,
+  });
 
   final Product product;
   int qty;
   double price;
+  String warehouseId;
 
   double get total => qty * price;
 }
@@ -42,30 +53,109 @@ class _CartLine {
 class _LocalSaleScreenState extends ConsumerState<LocalSaleScreen> {
   final List<_CartLine> _lines = [];
   String? _customerId; // null = sin cliente
-  String? _warehouseId; // null = principal
+  String? _warehouseId; // depósito por defecto para líneas nuevas
   bool _busy = false;
 
-  double _suggestedPrice(Product p) =>
-      ref.read(economicsByProductProvider)[p.id]?.salePrice ?? 0;
+  /// Id definido en el cliente: reintentar el mismo confirm es no-op en el RPC.
+  final String _saleId = newSaleId();
 
-  void _addLine(Product p, int qty, double price) {
+  double _suggestedPrice(Product p) =>
+      ref.read(economicsByProductProvider)[p.id]?.salePrice ??
+      p.salePrice ??
+      0;
+
+  String get _defaultWarehouseId {
+    if (_warehouseId != null) return _warehouseId!;
+    final warehouses =
+        ref.read(warehousesStreamProvider).valueOrNull ?? const <Warehouse>[];
+    for (final w in warehouses) {
+      if (w.isDefault) return w.id;
+    }
+    return warehouses.isEmpty ? '' : warehouses.first.id;
+  }
+
+  /// Disponible por depósito para [p], descontando lo que YA está en el
+  /// carrito (otras líneas del mismo producto; [except] excluye la línea que
+  /// se está editando).
+  Future<List<WarehouseChoice>> _choicesFor(Product p, {_CartLine? except}) async {
+    final warehouses =
+        ref.read(warehousesStreamProvider).valueOrNull ?? const <Warehouse>[];
+    final rows = await ref.read(inventoryRepositoryProvider).stockFor(p.id);
+    final available = {for (final s in rows) s.warehouseId: s.available};
+    final inCart = <String, int>{};
+    for (final l in _lines) {
+      if (l.product.id == p.id && !identical(l, except)) {
+        inCart[l.warehouseId] = (inCart[l.warehouseId] ?? 0) + l.qty;
+      }
+    }
+    return [
+      for (final w in warehouses)
+        WarehouseChoice(
+          id: w.id,
+          name: w.name,
+          isDefault: w.isDefault,
+          available: (available[w.id] ?? 0) - (inCart[w.id] ?? 0),
+        ),
+    ];
+  }
+
+  void _upsertLine(Product p, int qty, double price, String warehouseId) {
     setState(() {
       for (final l in _lines) {
-        if (l.product.id == p.id) {
+        if (l.product.id == p.id && l.warehouseId == warehouseId) {
           l.qty += qty;
           l.price = price;
           return;
         }
       }
-      _lines.add(_CartLine(product: p, qty: qty, price: price));
+      _lines.add(_CartLine(
+          product: p, qty: qty, price: price, warehouseId: warehouseId));
     });
   }
 
-  Future<void> _scan() => SaleScanScreen.open(
-        context,
-        onAddLine: _addLine,
-        suggestedPrice: _suggestedPrice,
-      );
+  /// Abre el editor de línea (cantidad + precio + depósito con tope de stock)
+  /// para un producto nuevo. Devuelve true si se agregó al carrito.
+  Future<bool> _addProduct(Product p) async {
+    final choices = await _choicesFor(p);
+    if (!mounted) return false;
+    final totalAvailable =
+        choices.fold<int>(0, (a, c) => a + (c.available > 0 ? c.available : 0));
+    if (totalAvailable <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content:
+              Text('“${p.title}” no tiene stock disponible en ningún depósito.')));
+      return false;
+    }
+    // Preseleccionar el depósito por defecto solo si tiene disponible.
+    var initial = _defaultWarehouseId;
+    final def = choices.where((c) => c.id == initial).toList();
+    if (def.isEmpty || def.first.available <= 0) {
+      initial = choices.firstWhere((c) => c.available > 0).id;
+    }
+    var confirmed = false;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => QtyCostSheet(
+        title: p.title,
+        initialQty: 1,
+        initialCost: _suggestedPrice(p),
+        priceLabel: 'Precio unitario (ARS)',
+        confirmLabel: 'Agregar a la venta',
+        warehouses: choices,
+        initialWarehouseId: initial,
+        autoSaveNew: true,
+        onConfirm: (_, __) async {},
+        onConfirmWithWarehouse: (qty, price, wh) async {
+          _upsertLine(p, qty, price, wh);
+          confirmed = true;
+        },
+      ),
+    );
+    return confirmed;
+  }
+
+  Future<void> _scan() => SaleScanScreen.open(context, onProduct: _addProduct);
 
   Future<void> _search() async {
     final product = await showModalBottomSheet<Product>(
@@ -74,21 +164,12 @@ class _LocalSaleScreenState extends ConsumerState<LocalSaleScreen> {
       builder: (_) => const _ProductSearchSheet(),
     );
     if (product == null || !mounted) return;
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      builder: (_) => QtyCostSheet(
-        title: product.title,
-        initialQty: 1,
-        initialCost: _suggestedPrice(product),
-        priceLabel: 'Precio unitario (ARS)',
-        confirmLabel: 'Agregar a la venta',
-        onConfirm: (qty, price) async => _addLine(product, qty, price),
-      ),
-    );
+    await _addProduct(product);
   }
 
   Future<void> _editLine(_CartLine line) async {
+    final choices = await _choicesFor(line.product, except: line);
+    if (!mounted) return;
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -98,10 +179,30 @@ class _LocalSaleScreenState extends ConsumerState<LocalSaleScreen> {
         initialCost: line.price,
         priceLabel: 'Precio unitario (ARS)',
         confirmLabel: 'Guardar',
-        onConfirm: (qty, price) async => setState(() {
-          line.qty = qty;
-          line.price = price;
-        }),
+        warehouses: choices,
+        initialWarehouseId: line.warehouseId,
+        onConfirm: (_, __) async {},
+        onConfirmWithWarehouse: (qty, price, wh) async {
+          setState(() {
+            // Si cambió el depósito y ya hay línea para (producto, depósito),
+            // se fusionan.
+            if (wh != line.warehouseId) {
+              for (final other in _lines) {
+                if (!identical(other, line) &&
+                    other.product.id == line.product.id &&
+                    other.warehouseId == wh) {
+                  other.qty += qty;
+                  other.price = price;
+                  _lines.remove(line);
+                  return;
+                }
+              }
+            }
+            line.qty = qty;
+            line.price = price;
+            line.warehouseId = wh;
+          });
+        },
       ),
     );
   }
@@ -134,10 +235,16 @@ class _LocalSaleScreenState extends ConsumerState<LocalSaleScreen> {
       await ref.read(salesRepositoryProvider).createLocalSale(
             items: [
               for (final l in _lines)
-                (productId: l.product.id, quantity: l.qty, unitPrice: l.price),
+                (
+                  productId: l.product.id,
+                  quantity: l.qty,
+                  unitPrice: l.price,
+                  warehouseId: l.warehouseId,
+                ),
             ],
             customerId: _customerId,
             warehouseId: _warehouseId,
+            saleId: _saleId,
           );
       ref.invalidate(salesProvider);
       ref.invalidate(dashboardProvider);
@@ -151,11 +258,9 @@ class _LocalSaleScreenState extends ConsumerState<LocalSaleScreen> {
       setState(() => _busy = false);
       if (mounted) {
         // ej. "stock insuficiente en el depósito…" — nada quedó a medias.
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content:
-                  Text('No se registró la venta. ${e.toString().split('\n').first}')),
-        );
+        // Mismo _saleId al reintentar: si la venta SÍ entró y solo se cortó
+        // la respuesta, el reintento es no-op.
+        showAppError(context, e, title: 'No se registró la venta');
       }
     }
   }
@@ -193,6 +298,7 @@ class _LocalSaleScreenState extends ConsumerState<LocalSaleScreen> {
         ref.watch(customersProvider).valueOrNull ?? const <Customer>[];
     final warehouses =
         ref.watch(warehousesStreamProvider).valueOrNull ?? const <Warehouse>[];
+    final whName = {for (final w in warehouses) w.id: w.name};
     Customer? customer;
     for (final c in customers) {
       if (c.id == _customerId) customer = c;
@@ -216,16 +322,9 @@ class _LocalSaleScreenState extends ConsumerState<LocalSaleScreen> {
       },
       child: Scaffold(
         appBar: AppBar(title: const Text('Nueva venta')),
-        floatingActionButton: FloatingActionButton.extended(
-          onPressed: _scan,
-          backgroundColor: AppColors.primary,
-          foregroundColor: AppColors.onPrimary,
-          icon: const Icon(Icons.qr_code_scanner_rounded),
-          label: const Text('Escanear productos'),
-        ),
         body: SafeArea(
           child: ListView(
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 110),
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
             children: [
               SurfaceCard(
                 child: Column(
@@ -241,7 +340,7 @@ class _LocalSaleScreenState extends ConsumerState<LocalSaleScreen> {
                       const Divider(height: 18, color: AppColors.border),
                       _HeaderRow(
                         icon: Icons.warehouse_outlined,
-                        label: 'Depósito',
+                        label: 'Depósito sugerido',
                         value: wh == null
                             ? 'Principal'
                             : (wh.isDefault ? '${wh.name} · principal' : wh.name),
@@ -252,30 +351,17 @@ class _LocalSaleScreenState extends ConsumerState<LocalSaleScreen> {
                   ],
                 ),
               ),
+              const SizedBox(height: 12),
+              AddProductsCard(onScan: _scan, onSearch: _search),
               const SizedBox(height: 16),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Row(
-                    children: [
-                      Text('Productos · ${_lines.length}',
-                          style: const TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: AppColors.textSecondary)),
-                      const SizedBox(width: 8),
-                      TextButton.icon(
-                        onPressed: _search,
-                        icon: const Icon(Icons.search, size: 16),
-                        style: TextButton.styleFrom(
-                          foregroundColor: AppColors.primary,
-                          padding: EdgeInsets.zero,
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        ),
-                        label: const Text('Buscar'),
-                      ),
-                    ],
-                  ),
+                  Text('Lista de productos · ${_lines.length}',
+                      style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textSecondary)),
                   Text(Fmt.ars(total),
                       style: const TextStyle(
                           fontSize: 14,
@@ -298,6 +384,8 @@ class _LocalSaleScreenState extends ConsumerState<LocalSaleScreen> {
                 for (final l in _lines) ...[
                   _CartRow(
                     line: l,
+                    warehouseName:
+                        warehouses.length > 1 ? whName[l.warehouseId] : null,
                     onEdit: () => _editLine(l),
                     onRemove: () => setState(() => _lines.remove(l)),
                   ),
@@ -314,7 +402,7 @@ class _LocalSaleScreenState extends ConsumerState<LocalSaleScreen> {
                           child: CircularProgressIndicator(
                               strokeWidth: 2.4, color: AppColors.onPrimary),
                         )
-                      : Text('Registrar venta · ${Fmt.ars(total)}'),
+                      : Text('Guardar venta · ${Fmt.ars(total)}'),
                 ),
               ],
             ],
@@ -374,23 +462,23 @@ class _HeaderRow extends StatelessWidget {
 class _CartRow extends StatelessWidget {
   const _CartRow({
     required this.line,
+    required this.warehouseName,
     required this.onEdit,
     required this.onRemove,
   });
 
   final _CartLine line;
+  final String? warehouseName;
   final VoidCallback onEdit;
   final VoidCallback onRemove;
 
   @override
   Widget build(BuildContext context) {
     final p = line.product;
-    final overStock = line.qty > p.currentStock;
     return SurfaceCard(
       radius: 14,
       padding: const EdgeInsets.all(12),
       onTap: onEdit,
-      borderColor: overStock ? AppColors.danger : AppColors.border,
       child: Row(
         children: [
           ProductThumb(imageUrl: p.imageUrl, size: 40, radius: 10),
@@ -408,10 +496,9 @@ class _CartRow extends StatelessWidget {
                         color: AppColors.textPrimary)),
                 Text(
                   '${line.qty} u · ${Fmt.ars(line.price)} c/u'
-                  '${overStock ? ' · supera el disponible (${p.currentStock})' : ''}',
-                  style: TextStyle(
-                      fontSize: 11,
-                      color: overStock ? AppColors.danger : AppColors.textMuted),
+                  '${warehouseName != null ? ' · $warehouseName' : ''}',
+                  style:
+                      const TextStyle(fontSize: 11, color: AppColors.textMuted),
                 ),
               ],
             ),
@@ -431,8 +518,8 @@ class _CartRow extends StatelessWidget {
   }
 }
 
-/// Elegir cliente: "Sin cliente" (pop ''), lista del padrón o alta con la
-/// ventana compartida de proveedores/clientes.
+/// Elegir cliente: "Sin cliente" (pop ''), lista del padrón (con lápiz para
+/// editar) o alta con la ventana compartida de proveedores/clientes.
 class _CustomerSheet extends ConsumerStatefulWidget {
   const _CustomerSheet();
 
@@ -464,12 +551,38 @@ class _CustomerSheetState extends ConsumerState<_CustomerSheet> {
       if (mounted) Navigator.of(context).pop(created.id);
     } catch (e) {
       setState(() => _busy = false);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content: Text('No se pudo crear. ${e.toString().split('\n').first}')),
-        );
-      }
+      if (mounted) showAppError(context, e, title: 'No se pudo crear el cliente');
+    }
+  }
+
+  Future<void> _edit(Customer c) async {
+    final data = await PartyFormSheet.show(
+      context,
+      title: 'Editar cliente',
+      initial: PartyFormData(
+        name: c.name,
+        legalName: c.legalName,
+        taxId: c.taxId,
+        phone: c.phone,
+        email: c.email,
+      ),
+    );
+    if (data == null || !mounted) return;
+    try {
+      await ref.read(customersRepositoryProvider).update(
+            Customer(
+              id: c.id,
+              profileId: c.profileId,
+              name: data.name,
+              legalName: data.legalName,
+              taxId: data.taxId,
+              phone: data.phone,
+              email: data.email,
+            ),
+          );
+      ref.invalidate(customersProvider);
+    } catch (e) {
+      if (mounted) showAppError(context, e, title: 'No se pudo editar el cliente');
     }
   }
 
@@ -521,7 +634,8 @@ class _CustomerSheetState extends ConsumerState<_CustomerSheet> {
                   ),
                 ),
               ),
-              error: (e, _) => Text('No se pudieron cargar los clientes. $e',
+              error: (e, _) => Text(
+                  'No se pudieron cargar los clientes. ${AppErrors.friendly(e)}',
                   style: const TextStyle(fontSize: 12, color: AppColors.danger)),
               data: (customers) => Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -557,6 +671,12 @@ class _CustomerSheetState extends ConsumerState<_CustomerSheet> {
                                   ),
                               ],
                             ),
+                          ),
+                          IconButton(
+                            tooltip: 'Editar',
+                            icon: const Icon(Icons.edit_outlined,
+                                size: 18, color: AppColors.textMuted),
+                            onPressed: () => _edit(c),
                           ),
                         ],
                       ),
@@ -597,11 +717,14 @@ class _WarehousePickSheet extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Text('Depósito de la venta',
+            const Text('Depósito sugerido para las líneas nuevas',
                 style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w700,
                     color: AppColors.textPrimary)),
+            const SizedBox(height: 4),
+            const Text('Cada línea puede cambiar su depósito al editarla.',
+                style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
             const SizedBox(height: 14),
             for (final w in warehouses) ...[
               SurfaceCard(

@@ -45,6 +45,7 @@ class PurchasesRepository {
     String? supplierId,
     bool clearSupplier = false,
     String? warehouseId,
+    String? currency,
     String? reference,
     String? note,
   }) async {
@@ -54,6 +55,7 @@ class PurchasesRepository {
       else if (supplierId != null)
         'supplier_id': supplierId,
       if (warehouseId != null) 'warehouse_id': warehouseId,
+      if (currency != null) 'currency': currency,
       if (reference != null) 'reference': reference,
       if (note != null) 'note': note,
     }).eq('id', purchaseId);
@@ -147,6 +149,23 @@ class SuppliersRepository {
   Future<Supplier> create(Supplier s) async {
     final row =
         await _client.from('suppliers').insert(s.toInsert()).select().single();
+    return Supplier.fromJson(row);
+  }
+
+  /// Edición desde el lápiz del picker (nombre y datos fiscales/contacto).
+  Future<Supplier> update(Supplier s) async {
+    final row = await _client
+        .from('suppliers')
+        .update({
+          'name': s.name,
+          'legal_name': s.legalName,
+          'tax_id': s.taxId,
+          'phone': s.phone,
+          'email': s.email,
+        })
+        .eq('id', s.id)
+        .select()
+        .single();
     return Supplier.fromJson(row);
   }
 }

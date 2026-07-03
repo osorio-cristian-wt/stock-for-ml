@@ -72,13 +72,16 @@ select is((select margin_pct from public.v_product_economics where ml_item_id = 
           40.00::numeric, 'economics: margin_pct');
 
 -- Sell everything -> stock 0 -> out_of_stock alert fires.
+-- (El trigger v2 también alertó al CREAR el producto en 0; esa alerta se
+-- silenció sola al reponer, por eso acá se cuentan solo las NO leídas.)
 insert into public.stock_movements (profile_id, product_id, delta, reason, reference)
 values ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', -5, 'sale', 'ORDER-1');
 
 select is((select current_stock from public.products where id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
           0, 'stock decremented to 0');
 select is((select count(*)::int from public.alerts
-           where product_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' and type = 'out_of_stock'),
+           where product_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+             and type = 'out_of_stock' and is_read = false),
           1, 'out_of_stock alert created by trigger');
 
 select * from finish();

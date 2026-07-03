@@ -1,6 +1,46 @@
 import 'package:core_models/core_models.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+/// Ganancia real de una venta (fila de `v_sale_profit`): bruto − comisión −
+/// envío − costo de lo vendido según la política de costeo del perfil.
+class SaleProfit {
+  const SaleProfit({
+    required this.saleId,
+    required this.gross,
+    required this.costArs,
+    required this.netProfit,
+  });
+
+  final String saleId;
+  final double gross;
+  final double? costArs;
+  final double netProfit;
+
+  factory SaleProfit.fromJson(Map<String, dynamic> j) => SaleProfit(
+        saleId: j['sale_id'] as String,
+        gross: (j['gross'] as num?)?.toDouble() ?? 0,
+        costArs: (j['cost_ars'] as num?)?.toDouble(),
+        netProfit: (j['net_profit'] as num?)?.toDouble() ?? 0,
+      );
+}
+
+/// Política de valuación del costo de lo vendido (espejo del enum SQL).
+enum CostPolicy {
+  fifo('fifo', 'FIFO', 'Primera compra que entró, primera que sale'),
+  avg('avg', 'Promedio ponderado', 'Promedio de todas las compras cerradas'),
+  last('last', 'Última compra', 'El costo de la compra más reciente'),
+  manual('manual', 'Manual', 'El costo cargado a mano en cada producto');
+
+  const CostPolicy(this.wire, this.label, this.description);
+
+  final String wire;
+  final String label;
+  final String description;
+
+  static CostPolicy fromWire(String? w) =>
+      values.firstWhere((p) => p.wire == w, orElse: () => CostPolicy.fifo);
+}
+
 /// Reads the server-computed profitability view and FX rates.
 class EconomicsRepository {
   EconomicsRepository(this._client);
@@ -13,6 +53,32 @@ class EconomicsRepository {
         .select()
         .order('net_profit', ascending: false);
     return rows.map<ProductEconomics>((r) => ProductEconomics.fromJson(r)).toList();
+  }
+
+  /// Ganancia por venta desde `v_sale_profit` (últimas [limit]).
+  Future<List<SaleProfit>> saleProfits({int limit = 300}) async {
+    final rows = await _client
+        .from('v_sale_profit')
+        .select('sale_id, gross, cost_ars, net_profit')
+        .order('sold_at', ascending: false)
+        .limit(limit);
+    return rows.map<SaleProfit>((r) => SaleProfit.fromJson(r)).toList();
+  }
+
+  /// Política de costeo del perfil (app_settings.cost_policy; FIFO default).
+  Future<CostPolicy> costPolicy() async {
+    final row = await _client
+        .from('app_settings')
+        .select('cost_policy')
+        .maybeSingle();
+    return CostPolicy.fromWire(row?['cost_policy'] as String?);
+  }
+
+  Future<void> setCostPolicy(CostPolicy policy, String profileId) async {
+    await _client.from('app_settings').upsert({
+      'profile_id': profileId,
+      'cost_policy': policy.wire,
+    });
   }
 
   /// Latest cached USD→ARS rate from the `fx_rates` table (no network call).

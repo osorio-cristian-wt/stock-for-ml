@@ -1,8 +1,29 @@
+import 'dart:math';
+
 import 'package:core_models/core_models.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 /// One line of the local-sale cart (client side, before the RPC writes it).
-typedef LocalSaleLine = ({String productId, int quantity, double unitPrice});
+/// [warehouseId] permite que cada línea descuente de un depósito distinto;
+/// null = el depósito de la cabecera.
+typedef LocalSaleLine = ({
+  String productId,
+  int quantity,
+  double unitPrice,
+  String? warehouseId,
+});
+
+/// UUID v4 aleatorio (sin dependencia extra): identifica la venta ANTES de
+/// mandarla, para que un reintento tras un corte de red sea no-op en el RPC.
+String newSaleId() {
+  final rnd = Random.secure();
+  final b = List<int>.generate(16, (_) => rnd.nextInt(256));
+  b[6] = (b[6] & 0x0f) | 0x40; // versión 4
+  b[8] = (b[8] & 0x3f) | 0x80; // variante RFC 4122
+  final h = b.map((x) => x.toRadixString(16).padLeft(2, '0')).join();
+  return '${h.substring(0, 8)}-${h.substring(8, 12)}-${h.substring(12, 16)}-'
+      '${h.substring(16, 20)}-${h.substring(20)}';
+}
 
 /// Sales: orders imported from ML plus local (direct) sales. RLS scopes rows
 /// to the user.
@@ -50,13 +71,16 @@ class SalesRepository {
 
   /// Registers a multi-item sale outside ML (channel=local) via the
   /// `create_local_sale` RPC. Transactional: the backend validates that every
-  /// line is covered by the chosen warehouse's available stock BEFORE writing
+  /// line is covered by its warehouse's available stock BEFORE writing
   /// anything, so either the sale AND its stock discount happen, or neither.
+  /// Idempotente: pasá el mismo [saleId] (ver [newSaleId]) al reintentar y el
+  /// RPC no duplica nada.
   Future<String> createLocalSale({
     required List<LocalSaleLine> items,
     String? customerId,
     String? warehouseId,
     String? note,
+    String? saleId,
   }) async {
     final id = await _client.rpc('create_local_sale', params: {
       'p_items': [
@@ -65,11 +89,13 @@ class SalesRepository {
             'product_id': l.productId,
             'quantity': l.quantity,
             'unit_price': l.unitPrice,
+            if (l.warehouseId != null) 'warehouse_id': l.warehouseId,
           },
       ],
       'p_customer_id': customerId,
       'p_warehouse_id': warehouseId,
       'p_note': note,
+      'p_sale_id': saleId,
     });
     return id as String;
   }

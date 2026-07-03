@@ -13,16 +13,29 @@ import 'qty_cost_sheet.dart';
 /// Carga continua de una compra: la cámara queda abierta; cada código leído
 /// abre el sheet de cantidad/costo (si el producto existe) o el alta de
 /// producto y luego la cantidad (si es nuevo), y al cerrar vuelve a la cámara.
-/// "Finalizar carga" regresa a la compra.
+/// "Finalizar carga" regresa a la compra. El borrador de la compra recién se
+/// crea al confirmar la PRIMERA línea ([ensurePurchaseId]).
 class PurchaseScanScreen extends ConsumerStatefulWidget {
-  const PurchaseScanScreen({super.key, required this.purchaseId});
+  const PurchaseScanScreen({
+    super.key,
+    required this.ensurePurchaseId,
+    this.currency = 'USD',
+  });
 
-  final String purchaseId;
+  final Future<String> Function() ensurePurchaseId;
+  final String currency;
 
-  static Future<void> open(BuildContext context, {required String purchaseId}) {
+  static Future<void> open(
+    BuildContext context, {
+    required Future<String> Function() ensurePurchaseId,
+    String currency = 'USD',
+  }) {
     return Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => PurchaseScanScreen(purchaseId: purchaseId),
+        builder: (_) => PurchaseScanScreen(
+          ensurePurchaseId: ensurePurchaseId,
+          currency: currency,
+        ),
       ),
     );
   }
@@ -128,9 +141,12 @@ class _PurchaseScanScreenState extends ConsumerState<PurchaseScanScreen> {
           title: p.title,
           initialQty: 1,
           initialCost: p.purchaseCost,
+          priceLabel: 'Costo unitario (${widget.currency})',
+          autoSaveNew: true,
           onConfirm: (qty, cost) async {
+            final purchaseId = await widget.ensurePurchaseId();
             await ref.read(purchasesRepositoryProvider).addItem(
-                  purchaseId: widget.purchaseId,
+                  purchaseId: purchaseId,
                   productId: p.id,
                   quantity: qty,
                   unitCost: cost,

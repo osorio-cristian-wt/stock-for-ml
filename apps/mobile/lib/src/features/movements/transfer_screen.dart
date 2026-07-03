@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/queries.dart';
 import '../../data/supabase_providers.dart';
 import '../../theme/app_colors.dart';
+import '../../ui/errors.dart';
 import '../../ui/widgets/app_widgets.dart';
 import '../scan/code_scanner_screen.dart';
 
@@ -123,7 +124,7 @@ class _TransferScreenState extends ConsumerState<TransferScreen> {
         moved.add((products[e.key]?.title ?? 'Producto', e.value));
       }
     } catch (e) {
-      error = e.toString().split('\n').first;
+      error = AppErrors.friendly(e);
     }
     if (!mounted) return;
     setState(() {

@@ -5,8 +5,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/queries.dart';
 import '../../data/supabase_providers.dart';
 import '../../theme/app_colors.dart';
+import '../../ui/errors.dart';
 import '../../ui/format.dart';
 import '../../ui/widgets/app_widgets.dart';
+import '../../ui/widgets/brand_logo.dart';
 import '../connect_ml/connect_ml_screen.dart';
 import '../products/product_detail_screen.dart';
 
@@ -27,7 +29,6 @@ class HomeScreen extends ConsumerWidget {
     final dashAsync = ref.watch(dashboardProvider);
     final account = ref.watch(mlAccountProvider).valueOrNull;
     final unread = ref.watch(unreadAlertsCountProvider);
-    final name = _greeting(ref);
 
     return Scaffold(
       body: SafeArea(
@@ -38,13 +39,13 @@ class HomeScreen extends ConsumerWidget {
           onRefresh: () async {
             ref.invalidate(dashboardProvider);
             ref.invalidate(alertsProvider);
+            ref.invalidate(pushIssuesProvider);
             await ref.read(dashboardProvider.future);
           },
           child: ListView(
             padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
             children: [
               _TopBar(
-                name: name,
                 connected: account != null,
                 unread: unread,
                 onBell: onOpenAlerts,
@@ -61,6 +62,7 @@ class HomeScreen extends ConsumerWidget {
                     ),
                   ),
                 ),
+              const _PushIssuesBanner(),
               dashAsync.when(
                 loading: () => const Padding(
                   padding: EdgeInsets.only(top: 60),
@@ -90,25 +92,16 @@ class HomeScreen extends ConsumerWidget {
     );
   }
 
-  String _greeting(WidgetRef ref) {
-    final user = ref.read(supabaseClientProvider).auth.currentUser;
-    final email = user?.email ?? '';
-    if (email.isEmpty) return '';
-    final local = email.split('@').first;
-    if (local.isEmpty) return '';
-    return local[0].toUpperCase() + local.substring(1);
-  }
 }
 
+/// Logo grande de la marca (Manual de Marca §01) + estado ML + campana.
 class _TopBar extends StatelessWidget {
   const _TopBar({
-    required this.name,
     required this.connected,
     required this.unread,
     required this.onBell,
   });
 
-  final String name;
   final bool connected;
   final int unread;
   final VoidCallback onBell;
@@ -117,23 +110,8 @@ class _TopBar extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                name.isEmpty ? 'Hola' : 'Hola, $name',
-                style: const TextStyle(
-                    fontSize: 13, color: AppColors.textMuted, fontWeight: FontWeight.w500),
-              ),
-              const Text('Mi negocio',
-                  style: TextStyle(
-                      fontSize: 19,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.textPrimary,
-                      letterSpacing: -0.2)),
-            ],
-          ),
+        const Expanded(
+          child: BrandLogo(markSize: 42, wordmarkSize: 23),
         ),
         StatusPill(
           label: connected ? 'ML conectado' : 'ML sin conectar',
@@ -505,6 +483,182 @@ class _LowStockRow extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// "Quedaron N productos sin subir a ML": pushes en error (o demorados) que
+/// antes fallaban en silencio. Tap → detalle por producto + reintento.
+class _PushIssuesBanner extends ConsumerWidget {
+  const _PushIssuesBanner();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final issues = ref.watch(pushIssuesProvider).valueOrNull ?? const [];
+    if (issues.isEmpty) return const SizedBox.shrink();
+    final failed = issues.where((i) => i.status == 'error').length;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: SurfaceCard(
+        color: AppColors.warningSoft,
+        borderColor: AppColors.warning,
+        onTap: () => showModalBottomSheet<void>(
+          context: context,
+          isScrollControlled: true,
+          builder: (_) => const _PushIssuesSheet(),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.cloud_off_rounded, color: AppColors.warning),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    failed > 0
+                        ? 'Stock sin subir a ML: ${issues.length} producto${issues.length == 1 ? '' : 's'}'
+                        : 'Subida de stock a ML demorada (${issues.length})',
+                    style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary),
+                  ),
+                  const Text('Tocá para ver el detalle y reintentar',
+                      style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right, color: AppColors.warning),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PushIssuesSheet extends ConsumerStatefulWidget {
+  const _PushIssuesSheet();
+
+  @override
+  ConsumerState<_PushIssuesSheet> createState() => _PushIssuesSheetState();
+}
+
+class _PushIssuesSheetState extends ConsumerState<_PushIssuesSheet> {
+  bool _busy = false;
+
+  Future<void> _retry() async {
+    setState(() => _busy = true);
+    try {
+      await ref.read(connectionRepositoryProvider).retryPush();
+      ref.invalidate(pushIssuesProvider);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Reintento disparado — revisá en unos segundos.')));
+        Navigator.of(context).pop();
+      }
+    } catch (e) {
+      setState(() => _busy = false);
+      if (mounted) showAppError(context, e, title: 'No se pudo reintentar');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final issues = ref.watch(pushIssuesProvider).valueOrNull ?? const [];
+    final products = {
+      for (final p in ref.watch(productsStreamProvider).valueOrNull ??
+          const <Product>[])
+        p.id: p,
+    };
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text('Stock sin subir a MercadoLibre',
+                style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textPrimary)),
+            const SizedBox(height: 4),
+            const Text(
+              'Estos cambios de stock todavía no llegaron a ML (por conexión '
+              'u otro error). El stock local está bien; falta el push.',
+              style: TextStyle(fontSize: 12, color: AppColors.textMuted, height: 1.4),
+            ),
+            const SizedBox(height: 14),
+            Flexible(
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: issues.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 8),
+                itemBuilder: (_, i) {
+                  final issue = issues[i];
+                  final p = products[issue.productId];
+                  return SurfaceCard(
+                    radius: 13,
+                    padding: const EdgeInsets.all(11),
+                    child: Row(
+                      children: [
+                        Icon(
+                          issue.status == 'error'
+                              ? Icons.error_outline
+                              : Icons.schedule,
+                          size: 18,
+                          color: issue.status == 'error'
+                              ? AppColors.danger
+                              : AppColors.warning,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(p?.title ?? 'Producto',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                      color: AppColors.textPrimary)),
+                              Text(
+                                issue.status == 'error'
+                                    ? (issue.error ??
+                                        'Error tras ${issue.attempts} intento(s)')
+                                    : 'Pendiente de subir',
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                    fontSize: 11, color: AppColors.textMuted),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 14),
+            FilledButton.icon(
+              onPressed: _busy ? null : _retry,
+              icon: _busy
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2.2, color: AppColors.onPrimary),
+                    )
+                  : const Icon(Icons.refresh_rounded, size: 18),
+              label: const Text('Reintentar ahora'),
+            ),
+          ],
+        ),
       ),
     );
   }

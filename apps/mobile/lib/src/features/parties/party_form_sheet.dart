@@ -21,24 +21,33 @@ class PartyFormData {
   final String? email;
 }
 
-/// Ventana ÚNICA de alta para proveedores y clientes (mismo diseño para
-/// ambos). Devuelve los datos; el caller decide en qué tabla los crea.
+/// Ventana ÚNICA de alta/edición para proveedores y clientes (mismo diseño
+/// para ambos). Devuelve los datos; el caller decide en qué tabla los guarda.
+/// Con [initial] los campos vienen prellenados (edición con el lápiz).
 class PartyFormSheet extends StatefulWidget {
-  const PartyFormSheet({super.key, required this.title, this.nameHint});
+  const PartyFormSheet({
+    super.key,
+    required this.title,
+    this.nameHint,
+    this.initial,
+  });
 
-  /// 'Nuevo proveedor' | 'Nuevo cliente'.
+  /// 'Nuevo proveedor' | 'Nuevo cliente' | 'Editar…'.
   final String title;
   final String? nameHint;
+  final PartyFormData? initial;
 
   static Future<PartyFormData?> show(
     BuildContext context, {
     required String title,
     String? nameHint,
+    PartyFormData? initial,
   }) {
     return showModalBottomSheet<PartyFormData>(
       context: context,
       isScrollControlled: true,
-      builder: (_) => PartyFormSheet(title: title, nameHint: nameHint),
+      builder: (_) =>
+          PartyFormSheet(title: title, nameHint: nameHint, initial: initial),
     );
   }
 
@@ -47,11 +56,12 @@ class PartyFormSheet extends StatefulWidget {
 }
 
 class _PartyFormSheetState extends State<PartyFormSheet> {
-  final _name = TextEditingController();
-  final _legalName = TextEditingController();
-  final _taxId = TextEditingController();
-  final _phone = TextEditingController();
-  final _email = TextEditingController();
+  late final _name = TextEditingController(text: widget.initial?.name ?? '');
+  late final _legalName =
+      TextEditingController(text: widget.initial?.legalName ?? '');
+  late final _taxId = TextEditingController(text: widget.initial?.taxId ?? '');
+  late final _phone = TextEditingController(text: widget.initial?.phone ?? '');
+  late final _email = TextEditingController(text: widget.initial?.email ?? '');
   String? _error;
 
   @override

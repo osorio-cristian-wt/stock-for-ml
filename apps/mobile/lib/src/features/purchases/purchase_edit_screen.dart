@@ -8,7 +8,9 @@ import 'package:image_picker/image_picker.dart';
 import '../../data/queries.dart';
 import '../../data/supabase_providers.dart';
 import '../../theme/app_colors.dart';
+import '../../ui/errors.dart';
 import '../../ui/format.dart';
+import '../../ui/widgets/add_products_card.dart';
 import '../../ui/widgets/app_widgets.dart';
 import '../parties/party_form_sheet.dart';
 import '../products/product_form_screen.dart';
@@ -16,22 +18,48 @@ import '../scan/code_scanner_screen.dart';
 import 'purchase_scan_screen.dart';
 import 'qty_cost_sheet.dart';
 
-/// Load / review a purchase. Drafts are editable (choose supplier + warehouse,
-/// scan/search products by SKU, set quantities); closing posts the stock.
+/// Load / review a purchase. Drafts are editable (choose supplier + warehouse
+/// + currency, scan/search products by SKU, set quantities); closing posts the
+/// stock.
+///
+/// Sin [purchase], la pantalla arranca EN MEMORIA: el borrador recién se crea
+/// en la base cuando se carga el primer producto (estándar de borradores:
+/// nada persiste vacío) y, si al salir quedó sin líneas, se descarta solo.
 class PurchaseEditScreen extends ConsumerStatefulWidget {
-  const PurchaseEditScreen({super.key, required this.purchase});
+  const PurchaseEditScreen({super.key, this.purchase});
 
-  final Purchase purchase;
+  final Purchase? purchase;
 
   @override
   ConsumerState<PurchaseEditScreen> createState() => _PurchaseEditScreenState();
 }
 
 class _PurchaseEditScreenState extends ConsumerState<PurchaseEditScreen> {
-  late Purchase _p = widget.purchase;
+  late Purchase? _p = widget.purchase;
   bool _busy = false;
 
-  bool get _editable => _p.isDraft;
+  // Cabecera elegida antes de que exista el borrador (compra nueva).
+  String? _pendingSupplierId;
+  String? _pendingWarehouseId;
+  String _pendingCurrency = 'USD';
+
+  bool get _editable => _p?.isDraft ?? true;
+  String get _currency => _p?.currency ?? _pendingCurrency;
+
+  /// Crea el borrador en la base recién cuando hace falta (primer producto).
+  Future<String> _ensureDraft() async {
+    final existing = _p;
+    if (existing != null) return existing.id;
+    final userId = ref.read(supabaseClientProvider).auth.currentUser?.id ?? '';
+    final draft = await ref.read(purchasesRepositoryProvider).createDraft(
+          profileId: userId,
+          supplierId: _pendingSupplierId,
+          warehouseId: _pendingWarehouseId,
+          currency: _pendingCurrency,
+        );
+    if (mounted) setState(() => _p = draft);
+    return draft.id;
+  }
 
   Future<void> _pickSupplier() async {
     // '' = "no especificado" (clears the supplier); null = dismissed.
@@ -41,13 +69,18 @@ class _PurchaseEditScreenState extends ConsumerState<PurchaseEditScreen> {
       builder: (_) => const _SupplierSheet(),
     );
     if (selected == null || !mounted) return;
+    final p = _p;
+    if (p == null) {
+      setState(() => _pendingSupplierId = selected.isEmpty ? null : selected);
+      return;
+    }
     final repo = ref.read(purchasesRepositoryProvider);
     await repo.updateHeader(
-      _p.id,
+      p.id,
       supplierId: selected.isEmpty ? null : selected,
       clearSupplier: selected.isEmpty,
     );
-    final fresh = await repo.byId(_p.id);
+    final fresh = await repo.byId(p.id);
     if (mounted) setState(() => _p = fresh);
   }
 
@@ -60,15 +93,39 @@ class _PurchaseEditScreenState extends ConsumerState<PurchaseEditScreen> {
       builder: (_) => _WarehouseSheet(warehouses: warehouses),
     );
     if (selected == null || !mounted) return;
-    await ref.read(purchasesRepositoryProvider).updateHeader(_p.id, warehouseId: selected);
-    if (mounted) setState(() => _p = _p.copyWith(warehouseId: selected));
+    final p = _p;
+    if (p == null) {
+      setState(() => _pendingWarehouseId = selected);
+      return;
+    }
+    await ref.read(purchasesRepositoryProvider).updateHeader(p.id, warehouseId: selected);
+    if (mounted) setState(() => _p = p.copyWith(warehouseId: selected));
+  }
+
+  /// Moneda de los costos de ESTA compra (pedido del dueño: poder cargar en
+  /// pesos o USD). Cambiable mientras sea borrador.
+  Future<void> _setCurrency(String currency) async {
+    if (currency == _currency) return;
+    final p = _p;
+    if (p == null) {
+      setState(() => _pendingCurrency = currency);
+      return;
+    }
+    await ref
+        .read(purchasesRepositoryProvider)
+        .updateHeader(p.id, currency: currency);
+    final fresh = await ref.read(purchasesRepositoryProvider).byId(p.id);
+    if (mounted) setState(() => _p = fresh);
   }
 
   Future<void> _addItem() async {
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      builder: (_) => _AddItemSheet(purchaseId: _p.id),
+      builder: (_) => _AddItemSheet(
+        ensurePurchaseId: _ensureDraft,
+        currency: _currency,
+      ),
     );
   }
 
@@ -131,12 +188,13 @@ class _PurchaseEditScreenState extends ConsumerState<PurchaseEditScreen> {
       await showModalBottomSheet<void>(
         context: context,
         isScrollControlled: true,
-        builder: (_) => _InvoiceReviewSheet(purchaseId: _p.id, data: data),
+        builder: (_) =>
+            _InvoiceReviewSheet(ensurePurchaseId: _ensureDraft, data: data),
       );
     } catch (e) {
       if (mounted) {
         setState(() => _busy = false);
-        messenger.showSnackBar(SnackBar(content: Text('Error al leer la factura. $e')));
+        showAppError(context, e, title: 'No se pudo leer la factura');
       }
     }
   }
@@ -149,6 +207,7 @@ class _PurchaseEditScreenState extends ConsumerState<PurchaseEditScreen> {
         title: product?.title ?? 'Producto',
         initialQty: item.quantity,
         initialCost: item.unitCost,
+        priceLabel: 'Costo unitario ($_currency)',
         confirmLabel: 'Guardar',
         onConfirm: (qty, cost) async {
           await ref
@@ -160,7 +219,8 @@ class _PurchaseEditScreenState extends ConsumerState<PurchaseEditScreen> {
   }
 
   Future<void> _close(List<PurchaseItem> items) async {
-    if (items.isEmpty) {
+    final p = _p;
+    if (p == null || items.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Agregá al menos un producto.')),
       );
@@ -168,7 +228,7 @@ class _PurchaseEditScreenState extends ConsumerState<PurchaseEditScreen> {
     }
     setState(() => _busy = true);
     try {
-      await ref.read(purchasesRepositoryProvider).close(_p.id);
+      await ref.read(purchasesRepositoryProvider).close(p.id);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Compra cerrada · stock actualizado')),
@@ -178,14 +238,19 @@ class _PurchaseEditScreenState extends ConsumerState<PurchaseEditScreen> {
     } catch (e) {
       setState(() => _busy = false);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('No se pudo cerrar. $e')),
-        );
+        // El detalle importa: la compra NO impactó el stock si esto falló.
+        showAppError(context, e, title: 'No se cerró la compra');
       }
     }
   }
 
   Future<void> _discard(List<PurchaseItem> items) async {
+    final p = _p;
+    if (p == null) {
+      // Nada persistido todavía: salir alcanza.
+      Navigator.of(context).pop();
+      return;
+    }
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -208,13 +273,17 @@ class _PurchaseEditScreenState extends ConsumerState<PurchaseEditScreen> {
       ),
     );
     if (ok != true || !mounted) return;
-    await ref.read(purchasesRepositoryProvider).cancel(_p.id);
+    await ref.read(purchasesRepositoryProvider).cancel(p.id);
     if (mounted) Navigator.of(context).pop();
   }
 
   @override
   Widget build(BuildContext context) {
-    final itemsAsync = ref.watch(purchaseItemsProvider(_p.id));
+    final p = _p;
+    final items = p == null
+        ? const <PurchaseItem>[]
+        : ref.watch(purchaseItemsProvider(p.id)).valueOrNull ??
+            const <PurchaseItem>[];
     final products = {
       for (final p in ref.watch(productsStreamProvider).valueOrNull ?? const <Product>[])
         p.id: p,
@@ -225,126 +294,122 @@ class _PurchaseEditScreenState extends ConsumerState<PurchaseEditScreen> {
     };
     final warehouses =
         ref.watch(warehousesStreamProvider).valueOrNull ?? const <Warehouse>[];
-    final items = itemsAsync.valueOrNull ?? const <PurchaseItem>[];
     final total = items.fold<double>(0, (a, it) => a + it.lineTotal);
 
+    final supplierId = p?.supplierId ?? _pendingSupplierId;
+    final warehouseId = p?.warehouseId ?? _pendingWarehouseId;
     Warehouse? selectedWarehouse;
     Warehouse? defaultWarehouse;
     for (final w in warehouses) {
-      if (w.id == _p.warehouseId) selectedWarehouse = w;
+      if (w.id == warehouseId) selectedWarehouse = w;
       if (w.isDefault) defaultWarehouse = w;
     }
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(_editable ? 'Nueva compra' : 'Compra'),
-        actions: [
-          if (_editable)
-            IconButton(
-              tooltip: 'Escanear factura',
-              icon: const Icon(Icons.document_scanner_outlined,
-                  color: AppColors.primary),
-              onPressed: _busy ? null : _scanInvoice,
-            ),
-          if (_editable)
-            IconButton(
-              tooltip: 'Descartar',
-              icon: const Icon(Icons.delete_outline, color: AppColors.textMuted),
-              onPressed: () => _discard(items),
-            ),
-        ],
-      ),
-      floatingActionButton: _editable
-          ? FloatingActionButton.extended(
-              onPressed: () =>
-                  PurchaseScanScreen.open(context, purchaseId: _p.id),
-              backgroundColor: AppColors.primary,
-              foregroundColor: AppColors.onPrimary,
-              icon: const Icon(Icons.qr_code_scanner_rounded),
-              label: const Text('Escaneo continuo'),
-            )
-          : null,
-      body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(20, 12, 20, 100),
-          children: [
-            _HeaderCard(
-              supplier: suppliers[_p.supplierId],
-              warehouse: selectedWarehouse,
-              defaultWarehouse: defaultWarehouse,
-              editable: _editable,
-              onPickSupplier: _pickSupplier,
-              onPickWarehouse: _pickWarehouse,
-            ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Text('Productos · ${items.length}',
+    return PopScope(
+      // Estándar de borradores: si el borrador quedó sin líneas al salir, se
+      // descarta solo (no queda basura en Movimientos).
+      onPopInvokedWithResult: (didPop, _) {
+        final stale = _p;
+        if (didPop && stale != null && stale.isDraft && items.isEmpty) {
+          ref.read(purchasesRepositoryProvider).cancel(stale.id);
+        }
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(_editable ? 'Nueva compra' : 'Compra'),
+          actions: [
+            if (_editable && p != null)
+              IconButton(
+                tooltip: 'Descartar',
+                icon: const Icon(Icons.delete_outline, color: AppColors.textMuted),
+                onPressed: () => _discard(items),
+              ),
+          ],
+        ),
+        body: SafeArea(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
+            children: [
+              _HeaderCard(
+                supplier: suppliers[supplierId],
+                warehouse: selectedWarehouse,
+                defaultWarehouse: defaultWarehouse,
+                currency: _currency,
+                editable: _editable,
+                onPickSupplier: _pickSupplier,
+                onPickWarehouse: _pickWarehouse,
+                onCurrency: _setCurrency,
+              ),
+              if (_editable) ...[
+                const SizedBox(height: 12),
+                AddProductsCard(
+                  onScan: () => PurchaseScanScreen.open(
+                    context,
+                    ensurePurchaseId: _ensureDraft,
+                    currency: _currency,
+                  ),
+                  onSearch: _addItem,
+                  onInvoice: _busy ? () {} : _scanInvoice,
+                ),
+              ],
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Text('Lista de productos · ${items.length}',
+                      style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textSecondary)),
+                  const Spacer(),
+                  Text(
+                    _currency == 'USD' ? Fmt.usd(total) : Fmt.ars(total),
                     style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.textSecondary)),
-                if (_editable) ...[
-                  const SizedBox(width: 8),
-                  TextButton.icon(
-                    onPressed: _addItem,
-                    icon: const Icon(Icons.search, size: 16),
-                    style: TextButton.styleFrom(
-                      foregroundColor: AppColors.primary,
-                      padding: EdgeInsets.zero,
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                    label: const Text('Buscar'),
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary),
                   ),
                 ],
-                const Spacer(),
-                Text(
-                  _p.currency == 'USD' ? Fmt.usd(total) : Fmt.ars(total),
-                  style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.textPrimary),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            if (items.isEmpty)
-              const Padding(
-                padding: EdgeInsets.only(top: 30),
-                child: EmptyState(
-                  icon: Icons.add_box_outlined,
-                  title: 'Sin productos',
-                  message: 'Escaneá o buscá un producto por SKU para agregarlo.',
-                ),
-              )
-            else
-              for (final it in items) ...[
-                _ItemRow(
-                  item: it,
-                  product: products[it.productId],
-                  currency: _p.currency,
-                  editable: _editable,
-                  onEdit: () => _editItem(it, products[it.productId]),
-                  onRemove: () =>
-                      ref.read(purchasesRepositoryProvider).removeItem(it.id),
-                ),
-                const SizedBox(height: 9),
-              ],
-            if (_editable) ...[
-              const SizedBox(height: 18),
-              FilledButton(
-                onPressed: _busy ? null : () => _close(items),
-                child: _busy
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2.4, color: AppColors.onPrimary),
-                      )
-                    : const Text('Cerrar compra y actualizar stock'),
               ),
+              const SizedBox(height: 10),
+              if (items.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.only(top: 30),
+                  child: EmptyState(
+                    icon: Icons.add_box_outlined,
+                    title: 'Sin productos',
+                    message:
+                        'Escaneá o buscá un producto por SKU para agregarlo.',
+                  ),
+                )
+              else
+                for (final it in items) ...[
+                  _ItemRow(
+                    item: it,
+                    product: products[it.productId],
+                    currency: _currency,
+                    editable: _editable,
+                    onEdit: () => _editItem(it, products[it.productId]),
+                    onRemove: () =>
+                        ref.read(purchasesRepositoryProvider).removeItem(it.id),
+                  ),
+                  const SizedBox(height: 9),
+                ],
+              if (_editable) ...[
+                const SizedBox(height: 18),
+                FilledButton(
+                  onPressed: _busy || items.isEmpty ? null : () => _close(items),
+                  child: _busy
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2.4, color: AppColors.onPrimary),
+                        )
+                      : const Text('Guardar compra y actualizar stock'),
+                ),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );
@@ -356,17 +421,21 @@ class _HeaderCard extends StatelessWidget {
     required this.supplier,
     required this.warehouse,
     required this.defaultWarehouse,
+    required this.currency,
     required this.editable,
     required this.onPickSupplier,
     required this.onPickWarehouse,
+    required this.onCurrency,
   });
 
   final Supplier? supplier;
   final Warehouse? warehouse;
   final Warehouse? defaultWarehouse;
+  final String currency;
   final bool editable;
   final VoidCallback onPickSupplier;
   final VoidCallback onPickWarehouse;
+  final ValueChanged<String> onCurrency;
 
   @override
   Widget build(BuildContext context) {
@@ -390,6 +459,48 @@ class _HeaderCard extends StatelessWidget {
                 : (wh.isDefault ? '${wh.name} · principal' : wh.name),
             muted: false,
             onTap: editable ? onPickWarehouse : null,
+          ),
+          const Divider(height: 18, color: AppColors.border),
+          Row(
+            children: [
+              const Icon(Icons.payments_outlined,
+                  size: 18, color: AppColors.textSecondary),
+              const SizedBox(width: 10),
+              const Text('Moneda de los costos',
+                  style: TextStyle(fontSize: 13, color: AppColors.textMuted)),
+              const Spacer(),
+              for (final code in const ['USD', 'ARS'])
+                Padding(
+                  padding: const EdgeInsets.only(left: 6),
+                  child: GestureDetector(
+                    onTap: editable ? () => onCurrency(code) : null,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: currency == code
+                            ? AppColors.primary
+                            : AppColors.surfaceDeep,
+                        borderRadius: BorderRadius.circular(9),
+                        border: Border.all(
+                            color: currency == code
+                                ? AppColors.primary
+                                : AppColors.border),
+                      ),
+                      child: Text(
+                        code,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: currency == code
+                              ? AppColors.onPrimary
+                              : AppColors.textMuted,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
           ),
         ],
       ),
@@ -507,10 +618,13 @@ class _ItemRow extends StatelessWidget {
 
 /// Search products by SKU/title and add the chosen one (qty + unit cost), or
 /// jump to product creation when the scanned SKU doesn't exist yet.
+/// El borrador de la compra recién se crea al confirmar la primera línea
+/// (vía [ensurePurchaseId]).
 class _AddItemSheet extends ConsumerStatefulWidget {
-  const _AddItemSheet({required this.purchaseId});
+  const _AddItemSheet({required this.ensurePurchaseId, required this.currency});
 
-  final String purchaseId;
+  final Future<String> Function() ensurePurchaseId;
+  final String currency;
 
   @override
   ConsumerState<_AddItemSheet> createState() => _AddItemSheetState();
@@ -534,9 +648,12 @@ class _AddItemSheetState extends ConsumerState<_AddItemSheet> {
         title: p.title,
         initialQty: 1,
         initialCost: p.purchaseCost,
+        priceLabel: 'Costo unitario (${widget.currency})',
+        autoSaveNew: true,
         onConfirm: (qty, cost) async {
+          final purchaseId = await widget.ensurePurchaseId();
           await ref.read(purchasesRepositoryProvider).addItem(
-                purchaseId: widget.purchaseId,
+                purchaseId: purchaseId,
                 productId: p.id,
                 quantity: qty,
                 unitCost: cost,
@@ -548,9 +665,15 @@ class _AddItemSheetState extends ConsumerState<_AddItemSheet> {
   }
 
   Future<void> _createNew() async {
+    // Clasificar lo tipeado/escaneado: un GTIN dispara el autocompletado por
+    // catálogo de ML dentro del form (mismo flujo barcode-first del alta).
+    final scanned = _query.isEmpty ? null : ScannedCode.classify(_query);
     final created = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
-        builder: (_) => ProductFormScreen(initialSku: _query.isEmpty ? null : _query),
+        builder: (_) => ProductFormScreen(
+          initialGtin: (scanned?.isGtin ?? false) ? scanned!.gtin : null,
+          initialSku: (scanned?.isGtin ?? false) ? null : (_query.isEmpty ? null : _query),
+        ),
       ),
     );
     if (created == true && mounted) {
@@ -726,9 +849,9 @@ class _ProductPickRow extends StatelessWidget {
 /// matched against the live catalog by SKU/GTIN; the user approves which
 /// matched lines to add. Unmatched lines are flagged to create manually.
 class _InvoiceReviewSheet extends ConsumerStatefulWidget {
-  const _InvoiceReviewSheet({required this.purchaseId, required this.data});
+  const _InvoiceReviewSheet({required this.ensurePurchaseId, required this.data});
 
-  final String purchaseId;
+  final Future<String> Function() ensurePurchaseId;
   final Map<String, dynamic> data;
 
   @override
@@ -763,9 +886,10 @@ class _InvoiceReviewSheetState extends ConsumerState<_InvoiceReviewSheet> {
     setState(() => _busy = true);
     final repo = ref.read(purchasesRepositoryProvider);
     try {
+      final purchaseId = await widget.ensurePurchaseId();
       for (final l in toAdd) {
         await repo.addItem(
-          purchaseId: widget.purchaseId,
+          purchaseId: purchaseId,
           productId: l.product!.id,
           quantity: l.quantity,
           unitCost: l.unitCost,
@@ -780,9 +904,7 @@ class _InvoiceReviewSheetState extends ConsumerState<_InvoiceReviewSheet> {
     } catch (e) {
       setState(() => _busy = false);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('No se pudieron agregar. $e')),
-        );
+        showAppError(context, e, title: 'No se pudieron agregar las líneas');
       }
     }
   }
@@ -993,13 +1115,39 @@ class _SupplierSheetState extends ConsumerState<_SupplierSheet> {
       if (mounted) Navigator.of(context).pop(created.id);
     } catch (e) {
       setState(() => _busy = false);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content:
-                  Text('No se pudo crear. ${e.toString().split('\n').first}')),
-        );
-      }
+      if (mounted) showAppError(context, e, title: 'No se pudo crear el proveedor');
+    }
+  }
+
+  /// Lápiz: edita el proveedor con la misma ventana compartida.
+  Future<void> _edit(Supplier s) async {
+    final data = await PartyFormSheet.show(
+      context,
+      title: 'Editar proveedor',
+      initial: PartyFormData(
+        name: s.name,
+        legalName: s.legalName,
+        taxId: s.taxId,
+        phone: s.phone,
+        email: s.email,
+      ),
+    );
+    if (data == null || !mounted) return;
+    try {
+      await ref.read(suppliersRepositoryProvider).update(
+            Supplier(
+              id: s.id,
+              profileId: s.profileId,
+              name: data.name,
+              legalName: data.legalName,
+              taxId: data.taxId,
+              phone: data.phone,
+              email: data.email,
+            ),
+          );
+      ref.invalidate(suppliersProvider);
+    } catch (e) {
+      if (mounted) showAppError(context, e, title: 'No se pudo editar el proveedor');
     }
   }
 
@@ -1086,6 +1234,12 @@ class _SupplierSheetState extends ConsumerState<_SupplierSheet> {
                               ),
                           ],
                         ),
+                      ),
+                      IconButton(
+                        tooltip: 'Editar',
+                        icon: const Icon(Icons.edit_outlined,
+                            size: 18, color: AppColors.textMuted),
+                        onPressed: () => _edit(s),
                       ),
                     ],
                   ),

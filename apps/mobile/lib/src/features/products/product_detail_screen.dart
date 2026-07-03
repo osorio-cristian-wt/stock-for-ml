@@ -1,10 +1,12 @@
 import 'package:core_models/core_models.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/queries.dart';
 import '../../data/supabase_providers.dart';
 import '../../theme/app_colors.dart';
+import '../../ui/errors.dart';
 import '../../ui/format.dart';
 import '../../ui/widgets/app_widgets.dart';
 import '../price_comparison/price_comparison_screen.dart';
@@ -456,13 +458,64 @@ class _InternalCostCard extends StatelessWidget {
   }
 }
 
-class _StockCard extends StatelessWidget {
+class _StockCard extends ConsumerWidget {
   const _StockCard({required this.product});
 
   final Product product;
 
+  /// Edición rápida del umbral de stock bajo, sin pasar por el form completo.
+  Future<void> _editThreshold(BuildContext context, WidgetRef ref) async {
+    final controller = TextEditingController(
+      text: product.lowStockThreshold?.toString() ?? '',
+    );
+    final value = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: const Text('Umbral de stock bajo',
+            style: TextStyle(color: AppColors.textPrimary, fontSize: 17)),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+          style: const TextStyle(color: AppColors.textPrimary),
+          decoration: const InputDecoration(
+            hintText: 'Ej. 5 — vacío lo desactiva',
+          ),
+          onSubmitted: (v) => Navigator.of(ctx).pop(v.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child:
+                const Text('Cancelar', style: TextStyle(color: AppColors.textMuted)),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(controller.text.trim()),
+            style: FilledButton.styleFrom(minimumSize: const Size(0, 44)),
+            child: const Text('Guardar'),
+          ),
+        ],
+      ),
+    );
+    if (value == null || !context.mounted) return;
+    try {
+      // Update directo: copyWith no puede volver el umbral a null.
+      await ref
+          .read(supabaseClientProvider)
+          .from('products')
+          .update({'low_stock_threshold': value.isEmpty ? null : int.parse(value)})
+          .eq('id', product.id);
+    } catch (e) {
+      if (context.mounted) {
+        showAppError(context, e, title: 'No se pudo cambiar el umbral');
+      }
+    }
+  }
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return SurfaceCard(
       child: Row(
         children: [
@@ -491,9 +544,24 @@ class _StockCard extends StatelessWidget {
                     ),
                   ]),
                 ),
-                if (product.lowStockThreshold != null)
-                  Text('umbral: ${product.lowStockThreshold} u.',
-                      style: const TextStyle(fontSize: 11, color: AppColors.textMuted)),
+                InkWell(
+                  onTap: () => _editThreshold(context, ref),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        product.lowStockThreshold != null
+                            ? 'umbral: ${product.lowStockThreshold} u.'
+                            : 'sin umbral de stock bajo',
+                        style: const TextStyle(
+                            fontSize: 11, color: AppColors.textMuted),
+                      ),
+                      const SizedBox(width: 4),
+                      const Icon(Icons.edit_outlined,
+                          size: 13, color: AppColors.primary),
+                    ],
+                  ),
+                ),
               ],
             ),
           ),
@@ -715,10 +783,19 @@ class _VariationsCard extends ConsumerWidget {
 }
 
 /// Per-product timeline: purchases, adjustments, transfers and ML sales.
-class _HistoryCard extends ConsumerWidget {
+/// COLAPSABLE: arranca cerrado mostrando solo el resumen; el chevron del
+/// header lo expande (pedido del dueño: el detalle no debe ser una sábana).
+class _HistoryCard extends ConsumerStatefulWidget {
   const _HistoryCard({required this.productId});
 
   final String productId;
+
+  @override
+  ConsumerState<_HistoryCard> createState() => _HistoryCardState();
+}
+
+class _HistoryCardState extends ConsumerState<_HistoryCard> {
+  bool _expanded = false;
 
   IconData _icon(HistoryKind k) => switch (k) {
         HistoryKind.sale => Icons.shopping_bag_outlined,
@@ -731,9 +808,9 @@ class _HistoryCard extends ConsumerWidget {
       };
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final entries =
-        ref.watch(productHistoryProvider(productId)).valueOrNull ??
+        ref.watch(productHistoryProvider(widget.productId)).valueOrNull ??
             const <ProductHistoryEntry>[];
     if (entries.isEmpty) return const SizedBox.shrink();
     final shown = entries.take(30).toList();
@@ -745,23 +822,42 @@ class _HistoryCard extends ConsumerWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('Historial',
-                  style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                      color: AppColors.textMuted)),
-              const SizedBox(height: 12),
-              for (var i = 0; i < shown.length; i++) ...[
-                _HistoryRow(
-                  entry: shown[i],
-                  icon: _icon(shown[i].kind),
-                  productId: productId,
+              InkWell(
+                onTap: () => setState(() => _expanded = !_expanded),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Historial · ${entries.length} movimiento${entries.length == 1 ? '' : 's'}',
+                        style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                            color: AppColors.textMuted),
+                      ),
+                    ),
+                    AnimatedRotation(
+                      turns: _expanded ? 0.5 : 0,
+                      duration: const Duration(milliseconds: 150),
+                      child: const Icon(Icons.expand_more,
+                          size: 20, color: AppColors.textSecondary),
+                    ),
+                  ],
                 ),
-                if (i != shown.length - 1)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 9),
-                    child: Divider(height: 1, color: AppColors.border),
+              ),
+              if (_expanded) ...[
+                const SizedBox(height: 12),
+                for (var i = 0; i < shown.length; i++) ...[
+                  _HistoryRow(
+                    entry: shown[i],
+                    icon: _icon(shown[i].kind),
+                    productId: widget.productId,
                   ),
+                  if (i != shown.length - 1)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 9),
+                      child: Divider(height: 1, color: AppColors.border),
+                    ),
+                ],
               ],
             ],
           ),

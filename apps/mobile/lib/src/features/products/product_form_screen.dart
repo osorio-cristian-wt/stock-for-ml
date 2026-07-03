@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/queries.dart';
 import '../../data/supabase_providers.dart';
 import '../../theme/app_colors.dart';
+import '../../ui/errors.dart';
 import '../../ui/format.dart';
 
 /// Screen 06 · Alta / Editar producto. Creates a new product or updates an
@@ -42,11 +43,13 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
   late final TextEditingController _sku;
   late final TextEditingController _threshold;
   late final TextEditingController _cost;
+  late final TextEditingController _salePrice;
   late final TextEditingController _brand;
 
   String _currency = 'USD';
   bool _busy = false;
   bool _suggesting = false;
+  bool _enriching = false;
   String? _error;
   String? _gtin;
   String? _categoryId;
@@ -66,11 +69,25 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
           ? p.purchaseCost.toString().replaceAll('.', ',')
           : '',
     );
+    _salePrice = TextEditingController(
+      text: p?.salePrice != null && p!.salePrice! > 0
+          ? p.salePrice!.toString().replaceAll('.', ',')
+          : '',
+    );
     _currency = p?.purchaseCurrency ?? 'USD';
     _gtin = p?.gtin ?? widget.initialGtin;
     _categoryId = p?.categoryId ?? widget.initialCategoryId;
     _brand = TextEditingController(text: p?.brand ?? widget.initialBrand ?? '');
     _imageUrl = p?.imageUrl ?? widget.initialImageUrl;
+
+    // Flujo barcode-first para cualquier alta con GTIN: si nadie corrió ya
+    // la cascada (no llegó título prellenado), buscar la ficha en el catálogo
+    // de ML acá mismo — así el alta desde compra/venta/búsqueda autocompleta
+    // igual que la del escáner de Productos.
+    final title = _title.text.trim();
+    if (!widget.isEdit && _gtin != null && title.isEmpty) {
+      Future.microtask(_autoEnrich);
+    }
   }
 
   @override
@@ -79,6 +96,7 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
     _sku.dispose();
     _threshold.dispose();
     _cost.dispose();
+    _salePrice.dispose();
     _brand.dispose();
     super.dispose();
   }
@@ -86,10 +104,52 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
   double get _costValue =>
       double.tryParse(_cost.text.trim().replaceAll(',', '.')) ?? 0;
 
+  double get _salePriceValue =>
+      double.tryParse(_salePrice.text.trim().replaceAll(',', '.')) ?? 0;
+
+  /// Cascada de enriquecimiento (catálogo ML → predictor) sobre el GTIN.
+  /// Solo rellena lo que el usuario todavía no tocó.
+  Future<void> _autoEnrich() async {
+    if (!mounted || _gtin == null) return;
+    setState(() => _enriching = true);
+    try {
+      final enrichment = await ref
+          .read(catalogRepositoryProvider)
+          .lookup(ScannedCode.classify(_gtin!));
+      if (!mounted || !enrichment.hasMatch) return;
+      setState(() {
+        if (_title.text.trim().isEmpty && enrichment.name != null) {
+          _title.text = enrichment.name!;
+        }
+        if (_brand.text.trim().isEmpty && enrichment.brand != null) {
+          _brand.text = enrichment.brand!;
+        }
+        _imageUrl ??= enrichment.imageUrl;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Ficha encontrada en ML — revisá los datos y guardá.'),
+      ));
+    } catch (_) {
+      // Silencioso: sin ficha se sigue con carga manual, como en el escáner.
+    } finally {
+      if (mounted) setState(() => _enriching = false);
+    }
+  }
+
   Future<void> _save() async {
     final title = _title.text.trim();
     if (title.isEmpty) {
       setState(() => _error = 'El título es obligatorio.');
+      return;
+    }
+    // Ambos precios son obligatorios: sin costo no hay rentabilidad y sin
+    // precio de venta la venta local no puede sugerir nada.
+    if (_costValue <= 0) {
+      setState(() => _error = 'Ingresá el costo de compra (mayor a 0).');
+      return;
+    }
+    if (_salePriceValue <= 0) {
+      setState(() => _error = 'Ingresá el precio de venta (mayor a 0).');
       return;
     }
     setState(() {
@@ -114,6 +174,7 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
           brand: brand,
           purchaseCost: _costValue,
           purchaseCurrency: _currency,
+          salePrice: _salePriceValue,
           lowStockThreshold: threshold,
         );
         await repo.update(updated);
@@ -128,6 +189,7 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
           brand: brand,
           purchaseCost: _costValue,
           purchaseCurrency: _currency,
+          salePrice: _salePriceValue,
           lowStockThreshold: threshold,
           imageUrl: _imageUrl,
         ));
@@ -142,16 +204,13 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
         Navigator.of(context).pop(true);
       }
     } catch (e) {
-      setState(() => _error = 'No se pudo guardar. ${_short(e)}');
+      setState(() => _error = 'No se pudo guardar. ${AppErrors.friendly(e)}');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
 
-  String _short(Object e) {
-    final s = e.toString();
-    return s.length > 90 ? '${s.substring(0, 90)}…' : s;
-  }
+  String _short(Object e) => AppErrors.friendly(e);
 
   /// LLM last-fallback (§7.4): suggest category + brand from the title when the
   /// catalog/predictor couldn't resolve it. The user always confirms/overrides.
@@ -289,6 +348,10 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
         children: [
           Center(child: _PhotoPicker(imageUrl: _imageUrl)),
           const SizedBox(height: 20),
+          if (_enriching) ...[
+            const _EnrichingBanner(),
+            const SizedBox(height: 13),
+          ],
           if (_gtin != null) ...[
             _ReadonlyRow(label: 'GTIN (código escaneado)', value: _gtin!),
             const SizedBox(height: 13),
@@ -335,6 +398,16 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
             fxRate: fx?.rate,
             costValue: _costValue,
           ),
+          const SizedBox(height: 13),
+          _Field(
+            label: 'Precio de venta (ARS)',
+            controller: _salePrice,
+            hint: '25.000',
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            inputFormatters: [
+              FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]')),
+            ],
+          ),
           if (mlConnected) ...[
             const SizedBox(height: 16),
             const _LinkMlHint(),
@@ -354,6 +427,38 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
                         strokeWidth: 2.4, color: AppColors.onPrimary),
                   )
                 : Text(widget.isEdit ? 'Guardar cambios' : 'Crear producto'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Aviso mientras corre la cascada de enriquecimiento por GTIN.
+class _EnrichingBanner extends StatelessWidget {
+  const _EnrichingBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: const Row(
+        children: [
+          SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(
+                strokeWidth: 2, color: AppColors.primary),
+          ),
+          SizedBox(width: 10),
+          Expanded(
+            child: Text('Buscando la ficha en el catálogo de MercadoLibre…',
+                style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
           ),
         ],
       ),

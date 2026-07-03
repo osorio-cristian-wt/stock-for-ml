@@ -2,9 +2,11 @@ import 'package:core_models/core_models.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../data/economics_repository.dart';
 import '../../data/queries.dart';
 import '../../data/supabase_providers.dart';
 import '../../theme/app_colors.dart';
+import '../../ui/errors.dart';
 import '../../ui/format.dart';
 import '../../ui/widgets/app_widgets.dart';
 import '../purchases/purchase_edit_screen.dart';
@@ -29,21 +31,50 @@ class _MovementsScreenState extends ConsumerState<MovementsScreen> {
 
   void _closeDial() => setState(() => _dialOpen = false);
 
-  Future<void> _newPurchase() async {
-    final userId = ref.read(supabaseClientProvider).auth.currentUser?.id ?? '';
+  /// La compra arranca EN MEMORIA: el borrador recién se persiste cuando se
+  /// carga el primer producto (estándar de borradores del feed).
+  void _newPurchase() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const PurchaseEditScreen()),
+    );
+  }
+
+  /// Borra (cancela) todos los borradores de compra pendientes.
+  Future<void> _clearDrafts(List<Purchase> drafts) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: const Text('Limpiar borradores',
+            style: TextStyle(color: AppColors.textPrimary)),
+        content: Text(
+          'Se descartan ${drafts.length} borrador${drafts.length == 1 ? '' : 'es'} '
+          'de compra (sus líneas no impactaron el stock).',
+          style: const TextStyle(color: AppColors.textMuted),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancelar',
+                style: TextStyle(color: AppColors.textMuted)),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Limpiar'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
     try {
-      final draft = await ref
-          .read(purchasesRepositoryProvider)
-          .createDraft(profileId: userId);
-      if (!mounted) return;
-      Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => PurchaseEditScreen(purchase: draft)),
-      );
+      final repo = ref.read(purchasesRepositoryProvider);
+      for (final d in drafts) {
+        await repo.cancel(d.id);
+      }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('No se pudo crear la compra. $e')),
-        );
+        showAppError(context, e, title: 'No se pudieron limpiar los borradores');
       }
     }
   }
@@ -61,7 +92,15 @@ class _MovementsScreenState extends ConsumerState<MovementsScreen> {
     final purchasesAsync = ref.watch(purchasesStreamProvider);
     final transfersAsync = ref.watch(transfersStreamProvider);
     final feed = ref.watch(movementsFeedProvider);
-    final entries = feed.where(_matches).toList();
+    // Los borradores viven en su propia sección arriba del feed.
+    final drafts = [
+      for (final p in purchasesAsync.valueOrNull ?? const <Purchase>[])
+        if (p.isDraft) p,
+    ];
+    final entries = feed
+        .where(_matches)
+        .where((e) => !(e is PurchaseEntry && e.purchase.isDraft))
+        .toList();
 
     final products = {
       for (final p
@@ -140,6 +179,8 @@ class _MovementsScreenState extends ConsumerState<MovementsScreen> {
                           child: _FeedList(
                             filter: _filter,
                             entries: entries,
+                            drafts: drafts,
+                            onClearDrafts: () => _clearDrafts(drafts),
                             sales: sales,
                             salesError: salesAsync.hasError
                                 ? '${salesAsync.error}'
@@ -253,6 +294,8 @@ class _FeedList extends StatelessWidget {
   const _FeedList({
     required this.filter,
     required this.entries,
+    required this.drafts,
+    required this.onClearDrafts,
     required this.sales,
     required this.salesError,
     required this.onRetrySales,
@@ -264,6 +307,8 @@ class _FeedList extends StatelessWidget {
 
   final _Filter filter;
   final List<MovementEntry> entries;
+  final List<Purchase> drafts;
+  final VoidCallback onClearDrafts;
   final List<Sale> sales;
   final String? salesError;
   final VoidCallback onRetrySales;
@@ -276,6 +321,8 @@ class _FeedList extends StatelessWidget {
   Widget build(BuildContext context) {
     final groups = _groupByDay(entries, DateTime.now());
     final showSummary = filter == _Filter.all || filter == _Filter.sales;
+    final showDrafts = drafts.isNotEmpty &&
+        (filter == _Filter.all || filter == _Filter.purchases);
 
     return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
@@ -289,7 +336,17 @@ class _FeedList extends StatelessWidget {
           InlineError(message: salesError!, onRetry: onRetrySales),
           const SizedBox(height: 18),
         ],
-        if (entries.isEmpty)
+        if (showDrafts) ...[
+          SectionHeader('Borradores',
+              uppercase: true, actionLabel: 'Limpiar', onAction: onClearDrafts),
+          const SizedBox(height: 10),
+          for (final d in drafts) ...[
+            _PurchaseRow(purchase: d, supplier: suppliers[d.supplierId]),
+            const SizedBox(height: 9),
+          ],
+          const SizedBox(height: 8),
+        ],
+        if (entries.isEmpty && !showDrafts)
           Padding(
             padding: const EdgeInsets.only(top: 40),
             child: _emptyState(),
@@ -383,21 +440,25 @@ class _DayGroup {
   final List<MovementEntry> entries = [];
 }
 
-/// "Este mes" (bruto) + ganancia neta, calculado sobre las ventas del mes.
-class _MonthSummaryCard extends StatelessWidget {
+/// "Este mes" (bruto) + ganancia REAL (v_sale_profit: descuenta comisión,
+/// envío y costo según la política de costeo elegida en Ajustes).
+class _MonthSummaryCard extends ConsumerWidget {
   const _MonthSummaryCard({required this.sales});
 
   final List<Sale> sales;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final profits =
+        ref.watch(saleProfitsProvider).valueOrNull ?? const <String, SaleProfit>{};
     final now = DateTime.now();
     final monthSales = sales.where((s) {
       final d = s.soldAt?.toLocal();
       return d != null && d.year == now.year && d.month == now.month;
     });
     final monthGross = monthSales.fold<double>(0, (a, s) => a + s.gross);
-    final monthNet = monthSales.fold<double>(0, (a, s) => a + _net(s));
+    final monthNet = monthSales.fold<double>(
+        0, (a, s) => a + (profits[s.id]?.netProfit ?? _net(s)));
 
     return SurfaceCard(
       child: Row(
@@ -692,6 +753,8 @@ class _SaleDetailSheet extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final net = _net(sale);
+    final profit =
+        ref.watch(saleProfitsProvider).valueOrNull?[sale.id];
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(22, 16, 22, 22),
@@ -814,6 +877,43 @@ class _SaleDetailSheet extends ConsumerWidget {
                 ],
               ),
             ),
+            if (profit != null) ...[
+              if (profit.costArs != null && profit.costArs! > 0)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('Costo de lo vendido',
+                          style: TextStyle(
+                              fontSize: 12, color: AppColors.textMuted)),
+                      Text('− ${Fmt.ars(profit.costArs!)}',
+                          style: const TextStyle(
+                              fontSize: 12, color: AppColors.danger)),
+                    ],
+                  ),
+                ),
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text('Ganancia',
+                        style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.textSecondary)),
+                    Text(Fmt.arsSigned(profit.netProfit),
+                        style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: profit.netProfit >= 0
+                                ? AppColors.primary
+                                : AppColors.danger)),
+                  ],
+                ),
+              ),
+            ],
           ],
         ),
       ),

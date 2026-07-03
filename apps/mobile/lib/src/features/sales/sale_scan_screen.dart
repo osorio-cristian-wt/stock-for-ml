@@ -6,38 +6,28 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../../data/queries.dart';
 import '../products/product_form_screen.dart';
-import '../purchases/qty_cost_sheet.dart';
 import '../scan/scanner_chrome.dart';
 
 /// Carga continua de una VENTA (mismo flujo que la compra): la cámara queda
-/// abierta; cada código conocido abre cantidad/precio y vuelve a la cámara;
+/// abierta; cada código conocido abre el editor de línea del carrito
+/// (cantidad + precio + depósito, con tope de stock) y vuelve a la cámara;
 /// un código nuevo pasa por el alta de producto. "Finalizar" regresa al
 /// carrito de la venta. Las líneas viven en el carrito del caller (la venta
 /// se escribe en una sola transacción al confirmarla).
 class SaleScanScreen extends ConsumerStatefulWidget {
-  const SaleScanScreen({
-    super.key,
-    required this.onAddLine,
-    required this.suggestedPrice,
-  });
+  const SaleScanScreen({super.key, required this.onProduct});
 
-  /// Suma la línea confirmada al carrito del caller.
-  final void Function(Product product, int qty, double unitPrice) onAddLine;
-
-  /// Precio sugerido para prellenar (ej. el precio de la publicación ML).
-  final double Function(Product product) suggestedPrice;
+  /// Lo maneja el carrito: abre el editor de línea para el producto y
+  /// devuelve true si terminó agregado.
+  final Future<bool> Function(Product product) onProduct;
 
   static Future<void> open(
     BuildContext context, {
-    required void Function(Product, int, double) onAddLine,
-    required double Function(Product) suggestedPrice,
+    required Future<bool> Function(Product) onProduct,
   }) {
     return Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => SaleScanScreen(
-          onAddLine: onAddLine,
-          suggestedPrice: suggestedPrice,
-        ),
+        builder: (_) => SaleScanScreen(onProduct: onProduct),
       ),
     );
   }
@@ -131,28 +121,7 @@ class _SaleScanScreenState extends ConsumerState<SaleScanScreen> {
         }
       }
       if (!mounted) return;
-      final p = product;
-      if (p.currentStock <= 0) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('“${p.title}” no tiene stock disponible.')));
-        return;
-      }
-      var confirmed = false;
-      await showModalBottomSheet<void>(
-        context: context,
-        isScrollControlled: true,
-        builder: (_) => QtyCostSheet(
-          title: p.title,
-          initialQty: 1,
-          initialCost: widget.suggestedPrice(p),
-          priceLabel: 'Precio unitario (ARS)',
-          confirmLabel: 'Agregar a la venta',
-          onConfirm: (qty, price) async {
-            widget.onAddLine(p, qty, price);
-            confirmed = true;
-          },
-        ),
-      );
+      final confirmed = await widget.onProduct(product);
       if (confirmed && mounted) setState(() => _added++);
     } finally {
       if (mounted) setState(() => _paused = false);

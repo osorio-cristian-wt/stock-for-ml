@@ -132,6 +132,19 @@ class InventoryRepository {
     return ProductCategory.fromJson(row);
   }
 
+  /// Renombra una categoría (el slug se regenera para mantener la unicidad).
+  Future<void> renameCategory(String id, String name, String slug) async {
+    await _client
+        .from('product_categories')
+        .update({'name': name, 'slug': slug}).eq('id', id);
+  }
+
+  /// Elimina la categoría; los productos que la usaban quedan "sin categoría"
+  /// (FK con on delete set null).
+  Future<void> deleteCategory(String id) async {
+    await _client.from('product_categories').delete().eq('id', id);
+  }
+
   /// Per-warehouse stock buckets for a product (incoming / on_hand / reserved).
   Future<List<ProductStock>> stockFor(String productId) async {
     final rows =

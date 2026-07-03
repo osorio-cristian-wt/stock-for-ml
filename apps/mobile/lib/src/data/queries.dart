@@ -2,6 +2,7 @@ import 'package:core_models/core_models.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'connection_repository.dart';
+import 'economics_repository.dart';
 import 'supabase_providers.dart';
 
 /// Live products (realtime stream → drives stock badges instantly).
@@ -34,6 +35,18 @@ final fxProvider = FutureProvider<FxRate?>((ref) {
 /// Recent sales (newest first).
 final salesProvider = FutureProvider<List<Sale>>((ref) {
   return ref.watch(salesRepositoryProvider).recent();
+});
+
+/// Ganancia REAL por venta (v_sale_profit: bruto − comisión − envío − costo
+/// según la política de costeo). Indexada por sale_id.
+final saleProfitsProvider = FutureProvider<Map<String, SaleProfit>>((ref) async {
+  final rows = await ref.watch(economicsRepositoryProvider).saleProfits();
+  return {for (final r in rows) r.saleId: r};
+});
+
+/// Política de costeo elegida en Ajustes (FIFO por defecto).
+final costPolicyProvider = FutureProvider<CostPolicy>((ref) {
+  return ref.watch(economicsRepositoryProvider).costPolicy();
 });
 
 /// Recent alerts (newest first).
@@ -483,6 +496,14 @@ final mlAccountProvider = FutureProvider<MlAccount?>((ref) {
   return ref.watch(connectionRepositoryProvider).currentAccount();
 });
 
+/// Push de stock a ML que no llegó (error o pendiente demorado). Alimenta el
+/// aviso del Inicio para que un fallo de conexión no pase en silencio.
+final pushIssuesProvider = FutureProvider<List<StockPushIssue>>((ref) async {
+  final account = await ref.watch(mlAccountProvider.future);
+  if (account == null) return const [];
+  return ref.watch(connectionRepositoryProvider).pushIssues();
+});
+
 /// Lets the user dismiss the "connect ML" step and enter the app anyway.
 final mlSetupDismissedProvider = StateProvider<bool>((ref) => false);
 
@@ -513,13 +534,16 @@ class DashboardData {
 }
 
 final dashboardProvider = FutureProvider<DashboardData>((ref) async {
-  final productsRepo = ref.watch(productsRepositoryProvider);
   final economicsRepo = ref.watch(economicsRepositoryProvider);
   final salesRepo = ref.watch(salesRepositoryProvider);
 
-  final products = await productsRepo.fetchAll();
+  // Products come from the realtime stream: "Necesitan reposición" reacts al
+  // instante a cualquier alta/compra/venta/ajuste (antes era un snapshot y un
+  // producto recién cargado bajo el umbral no aparecía hasta refrescar).
+  final products = await ref.watch(productsStreamProvider.future);
   final economics = await economicsRepo.fetchAll();
   final sales = await salesRepo.recent(limit: 120);
+  final profits = await ref.watch(saleProfitsProvider.future);
   final fx = await economicsRepo.currentFx();
 
   final now = DateTime.now();
@@ -531,9 +555,14 @@ final dashboardProvider = FutureProvider<DashboardData>((ref) async {
 
   final today = sales.where((s) => isToday(s.soldAt)).toList();
   final todayGross = today.fold<double>(0, (sum, s) => sum + s.gross);
+  // Ganancia REAL: bruto − comisión − envío − costo de lo vendido (política
+  // de costeo). Si la vista aún no tiene la venta, cae al neto de ingresos.
   final todayNet = today.fold<double>(
     0,
-    (sum, s) => sum + (s.netAmount ?? (s.gross - s.saleFee - s.shippingCost)),
+    (sum, s) =>
+        sum +
+        (profits[s.id]?.netProfit ??
+            (s.netAmount ?? (s.gross - s.saleFee - s.shippingCost))),
   );
 
   final margins = economics

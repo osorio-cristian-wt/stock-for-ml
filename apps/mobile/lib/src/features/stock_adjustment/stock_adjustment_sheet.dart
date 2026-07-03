@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/queries.dart';
 import '../../data/supabase_providers.dart';
 import '../../theme/app_colors.dart';
+import '../../ui/errors.dart';
 
 /// Screen 07 · Ajuste de stock (bottom sheet). Registers a stock movement.
 /// Supabase is the source of truth; user-origin movements are pushed to ML by
@@ -78,7 +79,7 @@ class _StockAdjustmentSheetState extends ConsumerState<StockAdjustmentSheet> {
     } catch (e) {
       setState(() {
         _busy = false;
-        _error = 'No se pudo registrar. ${e.toString().split('\n').first}';
+        _error = 'No se pudo registrar. ${AppErrors.friendly(e)}';
       });
     }
   }
