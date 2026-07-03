@@ -481,3 +481,33 @@ scopes OAuth de escritura.
 - Nota: vender fuera de ML hoy = ajuste con motivo "Venta" (descuenta y
   empuja a ML) pero sin registro comercial (importe/canal no van a `sales`);
   flujo de venta local queda como candidato a fase nueva.
+
+**Addendum 2026-07-03: venta local + clientes/proveedores + flujos operativos.**
+- **Venta local (RF-29):** migración `20260703120000_local_sales_customers.sql`
+  — enum `sale_channel` ('ml'|'local') en `sales` (ml_order_id pasa a nullable
+  con check por canal), `customer_id` opcional, tabla `customers` (RLS owner +
+  realtime) y RPC `create_local_sale` (inserta la venta y descuenta on_hand
+  vía `apply_stock_movement` origin=user → push a ML). pgTAP en
+  `03_local_sales_customers_test.sql` (18 asserts). En el front:
+  `LocalSaleSheet` (botón **Vender** en el detalle; cantidad, precio, cliente
+  opcional con alta rápida, depósito), chips **ML/Local** en Ventas (con
+  nombre del cliente en las locales), dedup en el historial (la venta local no
+  duplica su movimiento) y modelos `Customer`/`Sale.channel`.
+- **Proveedores (RF-30 + fix):** el picker de la compra ahora observa
+  `suppliersProvider` en vivo (antes recibía un snapshot que podía llegar
+  vacío → "no aparece nada"), suma **"Proveedor no especificado"**
+  (`updateHeader(clearSupplier: true)`) y datos extra opcionales (razón
+  social, CUIT/CUIL, teléfono) tanto en proveedores como en clientes.
+- **Escaneo continuo en compras:** `purchase_scan_screen.dart` — la cámara
+  queda abierta; código conocido → sheet cantidad/costo y vuelve a la cámara;
+  código nuevo → alta de producto (GTIN/SKU prellenado) → cantidad → cámara;
+  botón "Finalizar carga · N líneas". `QtyCostSheet` extraído a archivo
+  compartido. El FAB de la compra abre el escaneo continuo; la búsqueda manual
+  quedó como "Buscar" junto al header.
+- **Tab Movimientos** (bottom nav ahora 6): `movements_screen.dart` —
+  origen→destino explícito con swap, lista del stock del origen con stepper
+  (filas con movimiento ≠ 0 resaltadas), escaneo para sumar +1, confirmación
+  con **detalle de lo movido** y manejo de error parcial.
+- **Onboarding import:** tras conectar ML (deep-link o "Ya autoricé"),
+  `offerInitialImport` ofrece importar las publicaciones ahí mismo con
+  progreso bloqueante e invalidación de products/economics.
