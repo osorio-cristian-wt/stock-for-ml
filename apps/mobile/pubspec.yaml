@@ -18,6 +18,8 @@ dependencies:
   url_launcher: ^6.3.0
   app_links: ^6.3.0
   google_fonts: ^6.2.1
+  local_auth: ^2.3.0
+  shared_preferences: ^2.3.2
   core_models:
     path: ../../packages/core_models
 
