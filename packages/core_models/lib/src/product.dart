@@ -17,6 +17,7 @@ class Product {
     this.purchaseCost = 0,
     this.purchaseCurrency = 'USD',
     this.purchaseIncludesTaxes = false,
+    this.salePrice,
     this.imageUrl,
     this.currentStock = 0,
     this.lowStockThreshold,
@@ -37,6 +38,9 @@ class Product {
   final double purchaseCost;
   final String purchaseCurrency;
   final bool purchaseIncludesTaxes;
+
+  /// Local sale price (ARS). For ML-published products the listing price wins.
+  final double? salePrice;
   final String? imageUrl;
   final int currentStock;
   final int? lowStockThreshold;
@@ -55,6 +59,7 @@ class Product {
         purchaseCost: asDouble(json['purchase_cost']),
         purchaseCurrency: (json['purchase_currency'] as String?) ?? 'USD',
         purchaseIncludesTaxes: asBool(json['purchase_includes_taxes']),
+        salePrice: asDoubleOrNull(json['sale_price']),
         imageUrl: json['image_url'] as String?,
         currentStock: asInt(json['current_stock']),
         lowStockThreshold: asIntOrNull(json['low_stock_threshold']),
@@ -74,14 +79,16 @@ class Product {
         'purchase_cost': purchaseCost,
         'purchase_currency': purchaseCurrency,
         'purchase_includes_taxes': purchaseIncludesTaxes,
+        'sale_price': salePrice,
         if (imageUrl != null) 'image_url': imageUrl,
         if (lowStockThreshold != null) 'low_stock_threshold': lowStockThreshold,
         'is_active': isActive,
         if (notes != null) 'notes': notes,
       };
 
-  bool get isLowStock =>
-      lowStockThreshold != null && currentStock <= lowStockThreshold!;
+  /// En o bajo el umbral. Sin umbral definido, un producto en 0 igual cuenta
+  /// como "necesita reposición" (pedido del dueño: en 0 SIEMPRE se muestra).
+  bool get isLowStock => currentStock <= (lowStockThreshold ?? 0);
 
   Product copyWith({
     String? title,
@@ -91,6 +98,7 @@ class Product {
     String? brand,
     double? purchaseCost,
     String? purchaseCurrency,
+    double? salePrice,
     int? currentStock,
     int? lowStockThreshold,
     bool? isActive,
@@ -107,6 +115,7 @@ class Product {
         purchaseCost: purchaseCost ?? this.purchaseCost,
         purchaseCurrency: purchaseCurrency ?? this.purchaseCurrency,
         purchaseIncludesTaxes: purchaseIncludesTaxes,
+        salePrice: salePrice ?? this.salePrice,
         imageUrl: imageUrl,
         currentStock: currentStock ?? this.currentStock,
         lowStockThreshold: lowStockThreshold ?? this.lowStockThreshold,
