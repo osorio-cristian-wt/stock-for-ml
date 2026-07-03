@@ -85,6 +85,15 @@
 
 ### Ventas y comparativas
 - **RF-18** Registrar ventas (órdenes) provenientes de ML con su detalle.
+- **RF-29** Registrar **ventas fuera de ML** ("venta local"): el backend
+  diferencia el canal de cada venta (`sales.channel = 'ml' | 'local'`); la
+  venta local descuenta stock del depósito elegido y empuja el nuevo
+  disponible a ML. Cliente **opcional**: se elige del padrón propio o queda
+  "sin cliente".
+- **RF-30** Padrón de **clientes** y **proveedores** asociados al usuario que
+  los creó (RLS por `profile_id`): alta rápida solo con nombre; datos
+  fiscales/contacto opcionales a futuro (razón social, CUIT/CUIL, teléfono,
+  email). Compras admiten "proveedor no especificado".
 - **RF-19** Comparativa entre productos propios (rentabilidad, margen, rotación).
 - **RF-20** Comparativa de precios contra la competencia **dentro de ML** (catálogo
   / `item_competition`). *(must-have del MVP)*
@@ -137,7 +146,7 @@
 
 | Requisito | Estado |
 |-----------|--------|
-| RF-01…RF-06, RF-08…RF-18, RF-20, RF-21, RF-23…RF-28 | ✅ Implementado (tests en verde: pgTAP 61, Deno 12, core_models 18, widget 1) |
+| RF-01…RF-06, RF-08…RF-18, RF-20, RF-21, RF-23…RF-30 | ✅ Implementado (tests en verde: pgTAP 61+18, Deno 12, core_models 22, widget 1) |
 | RF-07 variaciones | 🟡 Parcial: espejo `listing_variations` + UI en detalle; push por variación no soportado (se omite con nota en la cola) |
 | RF-19 comparativa entre productos | ✅ Pantalla "Comparativa" (margen/markup/ganancia/rotación 30d) desde Productos |
 | RF-22 push FCM | ⏸ Bloqueado por credenciales Firebase/APNs del dueño ([firebase.md](firebase.md)) |

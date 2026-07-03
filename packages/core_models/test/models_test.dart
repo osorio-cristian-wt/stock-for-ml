@@ -82,6 +82,65 @@ void main() {
     expect(a.currentQty, 0);
   });
 
+  test('Sale.fromJson defaults to the ml channel', () {
+    final s = Sale.fromJson({
+      'id': 's1',
+      'profile_id': 'u1',
+      'ml_order_id': 'ORDER-1',
+      'quantity': 2,
+      'unit_price': 100,
+    });
+    expect(s.channel, SaleChannel.ml);
+    expect(s.isLocal, isFalse);
+    expect(s.customerId, isNull);
+  });
+
+  test('Sale.fromJson maps a local sale with customer', () {
+    final s = Sale.fromJson({
+      'id': 's2',
+      'profile_id': 'u1',
+      'channel': 'local',
+      'customer_id': 'c1',
+      'quantity': 3,
+      'unit_price': '100.5',
+      'net_amount': 301.5,
+    });
+    expect(s.isLocal, isTrue);
+    expect(s.mlOrderId, isNull);
+    expect(s.customerId, 'c1');
+    expect(s.gross, 301.5);
+  });
+
+  test('Customer round-trips optional fiscal data', () {
+    final c = Customer.fromJson({
+      'id': 'c1',
+      'profile_id': 'u1',
+      'name': 'Juan Pérez',
+      'tax_id': '20-12345678-9',
+    });
+    expect(c.taxId, '20-12345678-9');
+    expect(c.legalName, isNull);
+    final insert = Customer(
+      id: '',
+      profileId: 'u1',
+      name: 'Ana',
+    ).toInsert();
+    expect(insert.containsKey('tax_id'), isFalse);
+    expect(insert['name'], 'Ana');
+  });
+
+  test('Supplier keeps optional fiscal fields', () {
+    final s = Supplier.fromJson({
+      'id': 'p1',
+      'profile_id': 'u1',
+      'name': 'Mayorista Sur',
+      'legal_name': 'Mayorista Sur S.R.L.',
+      'tax_id': '30-71234567-8',
+    });
+    expect(s.legalName, 'Mayorista Sur S.R.L.');
+    expect(s.toInsert()['tax_id'], '30-71234567-8');
+  });
+
   test('ListingVariation.fromJson builds a label from attribute values', () {
     final v = ListingVariation.fromJson({
       'id': 'v1',

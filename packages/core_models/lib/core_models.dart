@@ -6,6 +6,7 @@ library;
 
 export 'src/alert.dart';
 export 'src/barcode.dart';
+export 'src/customer.dart';
 export 'src/economics.dart';
 export 'src/fx_rate.dart';
 export 'src/listing_variation.dart';

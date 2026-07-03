@@ -1,11 +1,11 @@
 import 'package:meta/meta.dart';
 
-/// A reusable supplier ("proveedor") a purchase can be attributed to. Only
-/// the name is required (quick creation mid-purchase); the fiscal/contact
-/// data is optional for the future.
+/// A customer ("cliente") a local sale can be attributed to. Scoped to the
+/// creating user via `profile_id` (RLS). Only the name is required; the rest
+/// is optional data for the future (razón social, CUIT/CUIL, contacto).
 @immutable
-class Supplier {
-  const Supplier({
+class Customer {
+  const Customer({
     required this.id,
     required this.profileId,
     required this.name,
@@ -21,13 +21,13 @@ class Supplier {
   final String name;
   final String? legalName;
 
-  /// CUIT / CUIL.
+  /// CUIT / CUIL / DNI.
   final String? taxId;
   final String? phone;
   final String? email;
   final String? notes;
 
-  factory Supplier.fromJson(Map<String, dynamic> json) => Supplier(
+  factory Customer.fromJson(Map<String, dynamic> json) => Customer(
         id: json['id'] as String,
         profileId: json['profile_id'] as String,
         name: json['name'] as String,
