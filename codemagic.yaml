@@ -6,7 +6,8 @@ workflows:
 
     environment:
       flutter: stable
-      xcode: latest
+      # Avoid transient ASC upload failures seen with newest Xcode images.
+      xcode: 16.4
       cocoapods: default
       groups:
         - Supabase
