@@ -105,7 +105,9 @@ warehouseId, bucket, origin})`
 
 ### Navegación actual
 `HomeShell` ([home_shell.dart](../apps/mobile/lib/src/features/shell/home_shell.dart))
-= `IndexedStack` con bottom nav de 4 tabs: Inicio · Productos · Ventas · Ajustes.
+= `IndexedStack` con bottom nav de 4 tabs: Inicio · Productos · **Movimientos** ·
+Ajustes. Movimientos unifica ventas + compras + transferencias (feed cronológico
++ speed dial con las 3 acciones; ver addendum 2026-07-03 (3)).
 
 ---
 
@@ -541,3 +543,30 @@ scopes OAuth de escritura.
   consulta). Las ventas multi-ítem aparecen vía `sale_items` (índice por
   product_id).
 - **Navegación:** botón "Cancelar" en Movimientos (resetea ruta y cantidades).
+
+**Addendum 2026-07-03 (3): tabs Compras/Movim./Ventas unificadas en "Movimientos".**
+- **Bottom nav 6 → 4:** `Inicio · Productos · Movimientos · Ajustes`
+  ([home_shell.dart](../apps/mobile/lib/src/features/shell/home_shell.dart)).
+- **`movements_screen.dart` reescrita como feed unificado:** ventas + compras
+  (sin canceladas) + transferencias colapsadas, mezcladas cronológicamente y
+  agrupadas por día (Hoy/Ayer/dd-mm), con chips de filtro (Todos · Ventas ·
+  Compras · Transferencias). El resumen del mes (bruto + ganancia) se muestra
+  con filtro Todos/Ventas. Pull-to-refresh invalida `salesProvider` (compras y
+  transferencias son streams realtime). Si ventas falla, se muestra el
+  `InlineError` arriba pero compras/transferencias siguen visibles.
+- **Speed dial:** FAB "+" con scrim que despliega **Nueva venta**
+  (`LocalSaleScreen.open`), **Nueva compra** (borrador → `PurchaseEditScreen`)
+  y **Transferir** (`TransferScreen.open`).
+- **El flujo de transferencia** (ex-tab Movim.) pasó a
+  `features/movements/transfer_screen.dart` (`TransferScreen.open`), pantalla
+  pusheada con AppBar "Transferir stock" (escáner como action; el "Cancelar"
+  inline se reemplazó por el back).
+- **Data:** `InventoryRepository.watchTransfers` (stream de `stock_movements`
+  con reason='transfer'); en queries.dart `transfersStreamProvider`,
+  `TransferGroup` (par −origen/+destino colapsado por `reference`), sealed
+  `MovementEntry` (`SaleEntry`/`PurchaseEntry`/`TransferEntry`) y
+  `movementsFeedProvider` (merge ordenado desc).
+- **Borradas** `purchases_screen.dart` y `sales_screen.dart` (sus rows/detalle
+  viven ahora en `movements_screen.dart`); los flujos `purchase_edit_screen`,
+  `purchase_scan_screen`, `local_sale_screen` y `sale_scan_screen` quedaron
+  intactos.
