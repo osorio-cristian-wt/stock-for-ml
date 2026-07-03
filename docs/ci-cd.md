@@ -71,3 +71,4 @@ partir de ahí, el CI solo los consume.
   `namespace` interno de Android sigue siendo el generado por Flutter
   (`com.stockforml.stock_for_ml`) — es invisible para el usuario.
 - Para push notifications en los builds de TestFlight, ver [firebase.md](firebase.md).
+- Desde julio de 2026, App Store Connect rechaza IPAs compilados con iOS SDK 18.x / Xcode 16.x. Los pipelines iOS deben usar Xcode 26 o superior; por eso el repo quedó configurado para tomar la versión estable más nueva disponible en CI.

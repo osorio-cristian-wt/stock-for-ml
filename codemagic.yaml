@@ -6,8 +6,9 @@ workflows:
 
     environment:
       flutter: stable
-      # Avoid transient ASC upload failures seen with newest Xcode images.
-      xcode: 16.4
+      # Apple ahora exige iOS SDK 26+ para publicar en App Store Connect.
+      # Usamos la imagen estable más nueva en vez de fijar Xcode 16.4.
+      xcode: latest
       cocoapods: default
       groups:
         - Supabase
