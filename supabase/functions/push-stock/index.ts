@@ -46,12 +46,18 @@ Deno.serve(async (req) => {
 
       const { data: listings } = await admin
         .from("ml_listings")
-        .select("ml_item_id, status")
+        .select("ml_item_id, status, has_variations")
         .eq("product_id", row.product_id);
 
       const active = (listings ?? []).filter((l) => l.ml_item_id && l.status === "active");
+      // ML rejects an item-level available_quantity on items WITH variations
+      // (stock lives per variation there). Until the app tracks stock per
+      // variation, skip those instead of retry-looping, and leave a note on
+      // the queue row so the skip is visible.
+      const simple = active.filter((l) => !l.has_variations);
+      const skipped = active.length - simple.length;
 
-      if (account && active.length > 0) {
+      if (account && simple.length > 0) {
         let token = tokenCache.get(account.id);
         if (!token) {
           token = await getValidAccessToken(admin, account.id);
@@ -59,13 +65,17 @@ Deno.serve(async (req) => {
         }
         const client = new MeliClient(token, cfg.apiBase);
         const qty = Math.max(product.current_stock ?? 0, 0);
-        for (const l of active) {
+        for (const l of simple) {
           await client.updateItemQuantity(l.ml_item_id as string, qty);
         }
       }
 
       await admin.from("stock_push_queue").update({
-        status: "done", processed_at: new Date().toISOString(), error: null,
+        status: "done",
+        processed_at: new Date().toISOString(),
+        error: skipped > 0
+          ? `${skipped} publicación(es) con variaciones omitida(s): el push por variación no está soportado`
+          : null,
       }).eq("product_id", row.product_id);
       pushed++;
     } catch (e) {

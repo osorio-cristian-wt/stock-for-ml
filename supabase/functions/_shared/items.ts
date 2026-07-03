@@ -1,7 +1,7 @@
 // Shared item-sync logic: pulls an ML item into ml_listings (+ links/creates a
 // product and caches a fee estimate). Used by sync-items and process-events.
 import { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { MeliClient, MeliItem } from "./meli.ts";
+import { MeliClient, MeliItem, MeliVariation } from "./meli.ts";
 import { MlAccountRow } from "./orders.ts";
 
 const statusMap: Record<string, string> = {
@@ -10,6 +10,28 @@ const statusMap: Record<string, string> = {
   closed: "closed",
   under_review: "under_review",
 };
+
+/** Quotes a value for a PostgREST filter so `,`/`(`/`)`/`.` inside a SKU or
+ * GTIN cannot break the `or=(...)` / `in.(...)` syntax. */
+export function pgrestQuote(v: string): string {
+  return `"${v.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+}
+
+/** Maps an item's ML variations to `listing_variations` rows (pure). */
+export function variationRows(
+  profileId: string,
+  listingId: string,
+  variations: MeliVariation[] | undefined,
+): Record<string, unknown>[] {
+  return (variations ?? []).map((v) => ({
+    profile_id: profileId,
+    ml_listing_id: listingId,
+    ml_variation_id: String(v.id),
+    attributes: v.attribute_combinations ?? [],
+    price: v.price ?? null,
+    available_quantity: v.available_quantity ?? 0,
+  }));
+}
 
 export async function upsertItem(
   admin: SupabaseClient,
@@ -62,8 +84,8 @@ export async function upsertItem(
     // Dedup against the internal catalog.
     let matchId: string | null = null;
     const ors: string[] = [];
-    if (gtin) ors.push(`gtin.eq.${gtin}`);
-    if (sku) ors.push(`sku.eq.${sku}`);
+    if (gtin) ors.push(`gtin.eq.${pgrestQuote(gtin)}`);
+    if (sku) ors.push(`sku.eq.${pgrestQuote(sku)}`);
     if (ors.length > 0) {
       const { data: match } = await admin
         .from("products")
@@ -129,7 +151,7 @@ export async function upsertItem(
     estFee = prices?.[0]?.sale_fee_amount ?? null;
   } catch (_) { /* fees are best-effort */ }
 
-  await admin.from("ml_listings").upsert({
+  const { data: listing } = await admin.from("ml_listings").upsert({
     profile_id: account.profile_id,
     product_id: productId,
     ml_account_id: account.id,
@@ -147,7 +169,26 @@ export async function upsertItem(
     thumbnail: item.thumbnail,
     has_variations: (item.variations?.length ?? 0) > 0,
     last_synced_at: new Date().toISOString(),
-  }, { onConflict: "profile_id,ml_item_id" });
+  }, { onConflict: "profile_id,ml_item_id" }).select("id").single();
+
+  // Mirror the listing's variations (size/color/… each with ML-side stock).
+  // Stock truth per variation stays in ML for now: the app surfaces the
+  // breakdown but push-stock skips item-level PUTs on variation listings.
+  if (listing?.id) {
+    const rows = variationRows(account.profile_id, listing.id, item.variations);
+    if (rows.length > 0) {
+      await admin.from("listing_variations").upsert(rows, {
+        onConflict: "ml_listing_id,ml_variation_id",
+      });
+    }
+    // Prune variations ML no longer reports (or all, if none remain).
+    let stale = admin.from("listing_variations").delete().eq("ml_listing_id", listing.id);
+    if (rows.length > 0) {
+      const keep = rows.map((r) => pgrestQuote(String(r.ml_variation_id))).join(",");
+      stale = stale.not("ml_variation_id", "in", `(${keep})`);
+    }
+    await stale;
+  }
 }
 
 /** Extracts the id at the end of an ML resource path, e.g. "/items/MLA123" -> "MLA123". */

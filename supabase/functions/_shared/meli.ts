@@ -207,7 +207,23 @@ export interface MeliItem {
   seller_custom_field?: string | null;
   /** Item attributes; GTIN/SELLER_SKU live here. */
   attributes?: { id: string; name?: string; value_name?: string | null }[];
-  variations?: { id: number; price: number; available_quantity: number; attribute_combinations: unknown[] }[];
+  variations?: MeliVariation[];
+}
+
+/** One attribute of a variation combination (e.g. Color=Rojo). */
+export interface MeliVariationAttribute {
+  id?: string;
+  name?: string;
+  value_id?: string | null;
+  value_name?: string | null;
+}
+
+/** A variation of an item (size/color/…), each with its own ML-side stock. */
+export interface MeliVariation {
+  id: number;
+  price?: number;
+  available_quantity?: number;
+  attribute_combinations?: MeliVariationAttribute[];
 }
 
 export interface MeliOrderItem {
