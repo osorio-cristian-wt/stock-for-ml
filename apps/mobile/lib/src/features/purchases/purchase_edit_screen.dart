@@ -2,7 +2,6 @@ import 'dart:convert';
 
 import 'package:core_models/core_models.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 
@@ -13,6 +12,8 @@ import '../../ui/format.dart';
 import '../../ui/widgets/app_widgets.dart';
 import '../products/product_form_screen.dart';
 import '../scan/code_scanner_screen.dart';
+import 'purchase_scan_screen.dart';
+import 'qty_cost_sheet.dart';
 
 /// Load / review a purchase. Drafts are editable (choose supplier + warehouse,
 /// scan/search products by SKU, set quantities); closing posts the stock.
@@ -32,15 +33,21 @@ class _PurchaseEditScreenState extends ConsumerState<PurchaseEditScreen> {
   bool get _editable => _p.isDraft;
 
   Future<void> _pickSupplier() async {
-    final suppliers = ref.read(suppliersProvider).valueOrNull ?? const <Supplier>[];
+    // '' = "no especificado" (clears the supplier); null = dismissed.
     final selected = await showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
-      builder: (_) => _SupplierSheet(suppliers: suppliers),
+      builder: (_) => const _SupplierSheet(),
     );
     if (selected == null || !mounted) return;
-    await ref.read(purchasesRepositoryProvider).updateHeader(_p.id, supplierId: selected);
-    if (mounted) setState(() => _p = _p.copyWith(supplierId: selected));
+    final repo = ref.read(purchasesRepositoryProvider);
+    await repo.updateHeader(
+      _p.id,
+      supplierId: selected.isEmpty ? null : selected,
+      clearSupplier: selected.isEmpty,
+    );
+    final fresh = await repo.byId(_p.id);
+    if (mounted) setState(() => _p = fresh);
   }
 
   Future<void> _pickWarehouse() async {
@@ -137,10 +144,11 @@ class _PurchaseEditScreenState extends ConsumerState<PurchaseEditScreen> {
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      builder: (_) => _QtyCostSheet(
+      builder: (_) => QtyCostSheet(
         title: product?.title ?? 'Producto',
         initialQty: item.quantity,
         initialCost: item.unitCost,
+        confirmLabel: 'Guardar',
         onConfirm: (qty, cost) async {
           await ref
               .read(purchasesRepositoryProvider)
@@ -247,11 +255,12 @@ class _PurchaseEditScreenState extends ConsumerState<PurchaseEditScreen> {
       ),
       floatingActionButton: _editable
           ? FloatingActionButton.extended(
-              onPressed: _addItem,
+              onPressed: () =>
+                  PurchaseScanScreen.open(context, purchaseId: _p.id),
               backgroundColor: AppColors.primary,
               foregroundColor: AppColors.onPrimary,
               icon: const Icon(Icons.qr_code_scanner_rounded),
-              label: const Text('Agregar producto'),
+              label: const Text('Escaneo continuo'),
             )
           : null,
       body: SafeArea(
@@ -268,13 +277,26 @@ class _PurchaseEditScreenState extends ConsumerState<PurchaseEditScreen> {
             ),
             const SizedBox(height: 16),
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text('Productos · ${items.length}',
                     style: const TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w600,
                         color: AppColors.textSecondary)),
+                if (_editable) ...[
+                  const SizedBox(width: 8),
+                  TextButton.icon(
+                    onPressed: _addItem,
+                    icon: const Icon(Icons.search, size: 16),
+                    style: TextButton.styleFrom(
+                      foregroundColor: AppColors.primary,
+                      padding: EdgeInsets.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    label: const Text('Buscar'),
+                  ),
+                ],
+                const Spacer(),
                 Text(
                   _p.currency == 'USD' ? Fmt.usd(total) : Fmt.ars(total),
                   style: const TextStyle(
@@ -507,7 +529,7 @@ class _AddItemSheetState extends ConsumerState<_AddItemSheet> {
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      builder: (_) => _QtyCostSheet(
+      builder: (_) => QtyCostSheet(
         title: p.title,
         initialQty: 1,
         initialCost: p.purchaseCost,
@@ -935,148 +957,11 @@ double _asDouble(Object? v) {
   return double.tryParse('$v') ?? 0;
 }
 
-/// Quantity + unit-cost editor used both when adding and when editing a line.
-class _QtyCostSheet extends StatefulWidget {
-  const _QtyCostSheet({
-    required this.title,
-    required this.initialQty,
-    required this.initialCost,
-    required this.onConfirm,
-  });
-
-  final String title;
-  final int initialQty;
-  final double initialCost;
-  final Future<void> Function(int qty, double cost) onConfirm;
-
-  @override
-  State<_QtyCostSheet> createState() => _QtyCostSheetState();
-}
-
-class _QtyCostSheetState extends State<_QtyCostSheet> {
-  late int _qty = widget.initialQty;
-  late final TextEditingController _cost = TextEditingController(
-    text: widget.initialCost > 0
-        ? widget.initialCost.toString().replaceAll('.', ',')
-        : '',
-  );
-  bool _busy = false;
-
-  @override
-  void dispose() {
-    _cost.dispose();
-    super.dispose();
-  }
-
-  double get _costValue =>
-      double.tryParse(_cost.text.trim().replaceAll(',', '.')) ?? 0;
-
-  Future<void> _confirm() async {
-    setState(() => _busy = true);
-    try {
-      await widget.onConfirm(_qty, _costValue);
-      if (mounted) Navigator.of(context).pop();
-    } catch (e) {
-      setState(() => _busy = false);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('No se pudo guardar. $e')),
-        );
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-      child: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(22, 14, 22, 22),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: AppColors.borderStrong,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              Text(widget.title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.textPrimary)),
-              const SizedBox(height: 18),
-              Row(
-                children: [
-                  const Text('Cantidad',
-                      style: TextStyle(fontSize: 13, color: AppColors.textMuted)),
-                  const Spacer(),
-                  _RoundBtn(
-                      icon: Icons.remove,
-                      onTap: () => setState(() {
-                            if (_qty > 1) _qty--;
-                          })),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: Text('$_qty',
-                        style: const TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.textPrimary)),
-                  ),
-                  _RoundBtn(
-                      icon: Icons.add,
-                      filled: true,
-                      onTap: () => setState(() => _qty++)),
-                ],
-              ),
-              const SizedBox(height: 16),
-              const Text('Costo unitario',
-                  style: TextStyle(fontSize: 13, color: AppColors.textMuted)),
-              const SizedBox(height: 8),
-              TextField(
-                controller: _cost,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                inputFormatters: [
-                  FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]')),
-                ],
-                style: const TextStyle(color: AppColors.textPrimary, fontSize: 14),
-                decoration: const InputDecoration(hintText: '8,50'),
-              ),
-              const SizedBox(height: 18),
-              FilledButton(
-                onPressed: _busy ? null : _confirm,
-                child: _busy
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2.4, color: AppColors.onPrimary),
-                      )
-                    : const Text('Agregar a la compra'),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
+/// Supplier picker. Watches the live provider (so the list appears as soon as
+/// it loads), offers "Proveedor no especificado" (pops '') and quick creation
+/// with just a name — extra fiscal data (razón social, CUIT…) is optional.
 class _SupplierSheet extends ConsumerStatefulWidget {
-  const _SupplierSheet({required this.suppliers});
-
-  final List<Supplier> suppliers;
+  const _SupplierSheet();
 
   @override
   ConsumerState<_SupplierSheet> createState() => _SupplierSheetState();
@@ -1084,11 +969,18 @@ class _SupplierSheet extends ConsumerStatefulWidget {
 
 class _SupplierSheetState extends ConsumerState<_SupplierSheet> {
   final _name = TextEditingController();
+  final _legalName = TextEditingController();
+  final _taxId = TextEditingController();
+  final _phone = TextEditingController();
+  bool _showExtra = false;
   bool _busy = false;
 
   @override
   void dispose() {
     _name.dispose();
+    _legalName.dispose();
+    _taxId.dispose();
+    _phone.dispose();
     super.dispose();
   }
 
@@ -1098,9 +990,18 @@ class _SupplierSheetState extends ConsumerState<_SupplierSheet> {
     setState(() => _busy = true);
     final userId = ref.read(supabaseClientProvider).auth.currentUser?.id ?? '';
     try {
-      final created = await ref
-          .read(suppliersRepositoryProvider)
-          .create(Supplier(id: '', profileId: userId, name: name));
+      final created = await ref.read(suppliersRepositoryProvider).create(
+            Supplier(
+              id: '',
+              profileId: userId,
+              name: name,
+              legalName: _legalName.text.trim().isEmpty
+                  ? null
+                  : _legalName.text.trim(),
+              taxId: _taxId.text.trim().isEmpty ? null : _taxId.text.trim(),
+              phone: _phone.text.trim().isEmpty ? null : _phone.text.trim(),
+            ),
+          );
       ref.invalidate(suppliersProvider);
       if (mounted) Navigator.of(context).pop(created.id);
     } catch (e) {
@@ -1115,10 +1016,13 @@ class _SupplierSheetState extends ConsumerState<_SupplierSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final suppliersAsync = ref.watch(suppliersProvider);
+    final suppliers = suppliersAsync.valueOrNull ?? const <Supplier>[];
+
     return Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
       child: SafeArea(
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(20, 14, 20, 18),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -1131,7 +1035,39 @@ class _SupplierSheetState extends ConsumerState<_SupplierSheet> {
                       fontWeight: FontWeight.w700,
                       color: AppColors.textPrimary)),
               const SizedBox(height: 14),
-              for (final s in widget.suppliers) ...[
+              SurfaceCard(
+                radius: 13,
+                padding: const EdgeInsets.all(12),
+                onTap: () => Navigator.of(context).pop(''),
+                child: const Row(
+                  children: [
+                    Icon(Icons.help_outline,
+                        size: 18, color: AppColors.textMuted),
+                    SizedBox(width: 10),
+                    Expanded(
+                      child: Text('Proveedor no especificado',
+                          style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textSecondary)),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+              if (suppliersAsync.isLoading && suppliers.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 18),
+                  child: Center(
+                    child: SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2.4, color: AppColors.primary),
+                    ),
+                  ),
+                ),
+              for (final s in suppliers) ...[
                 SurfaceCard(
                   radius: 13,
                   padding: const EdgeInsets.all(12),
@@ -1142,11 +1078,25 @@ class _SupplierSheetState extends ConsumerState<_SupplierSheet> {
                           size: 18, color: AppColors.textSecondary),
                       const SizedBox(width: 10),
                       Expanded(
-                        child: Text(s.name,
-                            style: const TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                                color: AppColors.textPrimary)),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(s.name,
+                                style: const TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppColors.textPrimary)),
+                            if (s.legalName != null || s.taxId != null)
+                              Text(
+                                [
+                                  if (s.legalName != null) s.legalName!,
+                                  if (s.taxId != null) s.taxId!,
+                                ].join(' · '),
+                                style: const TextStyle(
+                                    fontSize: 11, color: AppColors.textMuted),
+                              ),
+                          ],
+                        ),
                       ),
                     ],
                   ),
@@ -1171,6 +1121,35 @@ class _SupplierSheetState extends ConsumerState<_SupplierSheet> {
                   ),
                 ],
               ),
+              if (!_showExtra)
+                TextButton.icon(
+                  onPressed: () => setState(() => _showExtra = true),
+                  icon: const Icon(Icons.expand_more, size: 18),
+                  style: TextButton.styleFrom(
+                      foregroundColor: AppColors.textSecondary),
+                  label: const Text('Datos extra (razón social, CUIT…)'),
+                )
+              else ...[
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _legalName,
+                  style: const TextStyle(color: AppColors.textPrimary, fontSize: 14),
+                  decoration: const InputDecoration(hintText: 'Razón social'),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _taxId,
+                  style: const TextStyle(color: AppColors.textPrimary, fontSize: 14),
+                  decoration: const InputDecoration(hintText: 'CUIT / CUIL'),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _phone,
+                  keyboardType: TextInputType.phone,
+                  style: const TextStyle(color: AppColors.textPrimary, fontSize: 14),
+                  decoration: const InputDecoration(hintText: 'Teléfono'),
+                ),
+              ],
             ],
           ),
         ),
@@ -1235,33 +1214,3 @@ class _WarehouseSheet extends StatelessWidget {
   }
 }
 
-class _RoundBtn extends StatelessWidget {
-  const _RoundBtn({required this.icon, required this.onTap, this.filled = false});
-
-  final IconData icon;
-  final VoidCallback onTap;
-  final bool filled;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: filled ? AppColors.primary : AppColors.surface,
-      borderRadius: BorderRadius.circular(10),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(10),
-        child: Container(
-          width: 36,
-          height: 36,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(10),
-            border: filled ? null : Border.all(color: AppColors.borderStrong),
-          ),
-          child: Icon(icon,
-              size: 20, color: filled ? AppColors.onPrimary : AppColors.textSecondary),
-        ),
-      ),
-    );
-  }
-}

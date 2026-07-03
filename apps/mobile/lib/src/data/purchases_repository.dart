@@ -43,12 +43,16 @@ class PurchasesRepository {
   Future<void> updateHeader(
     String purchaseId, {
     String? supplierId,
+    bool clearSupplier = false,
     String? warehouseId,
     String? reference,
     String? note,
   }) async {
     await _client.from('purchases').update({
-      if (supplierId != null) 'supplier_id': supplierId,
+      if (clearSupplier)
+        'supplier_id': null
+      else if (supplierId != null)
+        'supplier_id': supplierId,
       if (warehouseId != null) 'warehouse_id': warehouseId,
       if (reference != null) 'reference': reference,
       if (note != null) 'note': note,
