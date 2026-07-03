@@ -5,13 +5,14 @@ import '../../data/queries.dart';
 import '../../theme/app_colors.dart';
 import '../alerts/alerts_screen.dart';
 import '../home/home_screen.dart';
+import '../movements/movements_screen.dart';
 import '../products/products_screen.dart';
 import '../purchases/purchases_screen.dart';
 import '../sales/sales_screen.dart';
 import '../settings/settings_screen.dart';
 
-/// The signed-in app shell: four tabs (Inicio · Productos · Ventas · Ajustes)
-/// over a persistent bottom navigation bar, matching the design.
+/// The signed-in app shell: six tabs (Inicio · Productos · Compras · Movim. ·
+/// Ventas · Ajustes) over a persistent bottom navigation bar.
 class HomeShell extends ConsumerStatefulWidget {
   const HomeShell({super.key});
 
@@ -38,6 +39,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
       HomeScreen(onSeeAllLowStock: () => _goToTab(1), onOpenAlerts: _openAlerts),
       const ProductsScreen(),
       const PurchasesScreen(),
+      const MovementsScreen(),
       const SalesScreen(),
       const SettingsScreen(),
     ];
@@ -96,16 +98,22 @@ class _BottomNav extends StatelessWidget {
                 onTap: () => onTap(2),
               ),
               _NavItem(
-                icon: Icons.bar_chart_rounded,
-                label: 'Ventas',
+                icon: Icons.swap_horiz_rounded,
+                label: 'Movim.',
                 selected: index == 3,
                 onTap: () => onTap(3),
               ),
               _NavItem(
-                icon: Icons.settings_rounded,
-                label: 'Ajustes',
+                icon: Icons.bar_chart_rounded,
+                label: 'Ventas',
                 selected: index == 4,
                 onTap: () => onTap(4),
+              ),
+              _NavItem(
+                icon: Icons.settings_rounded,
+                label: 'Ajustes',
+                selected: index == 5,
+                onTap: () => onTap(5),
               ),
             ],
           ),
