@@ -14,6 +14,7 @@ workflows:
         APP_PATH: apps/mobile
         BUNDLE_ID: com.stockforml.app
         IOS_MIN_VERSION: '14.0'
+        APP_ENV: production
       ios_signing:
         distribution_type: app_store
         bundle_identifier: com.stockforml.app
@@ -75,7 +76,10 @@ workflows:
 
           flutter build ipa --release \
             --build-number="$PROJECT_BUILD_NUMBER" \
-            --export-options-plist="$HOME/export_options.plist"
+            --export-options-plist="$HOME/export_options.plist" \
+            --dart-define=APP_ENV="$APP_ENV" \
+            --dart-define=SUPABASE_URL="$SUPABASE_URL" \
+            --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
 
           IPA_PATH="$(find build/ios -type f -name '*.ipa' | head -n 1 || true)"
 
@@ -90,4 +94,12 @@ workflows:
 
     artifacts:
       - build_artifacts/*.ipa
+      - build/ios/archive/*.xcarchive
       - /tmp/xcodebuild_logs/*.log
+
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+        beta_groups:
+          - Internal Testers
