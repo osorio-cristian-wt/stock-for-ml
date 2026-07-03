@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'data/queries.dart';
 import 'data/supabase_providers.dart';
+import 'features/auth/app_lock.dart';
 import 'features/auth/login_screen.dart';
 import 'features/connect_ml/connect_ml_screen.dart';
 import 'features/connect_ml/import_prompt.dart';
@@ -102,7 +103,9 @@ class _AuthGate extends ConsumerWidget {
       data: (_) {
         final session = ref.watch(supabaseClientProvider).auth.currentSession;
         if (session == null) return const LoginScreen();
-        return const _PostLoginGate();
+        // Candado biométrico local: re-pide Face ID/huella si la app estuvo
+        // mucho tiempo en segundo plano (configurable en Ajustes).
+        return const AppLock(child: _PostLoginGate());
       },
     );
   }

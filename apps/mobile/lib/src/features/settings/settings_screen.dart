@@ -2,12 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../config/env.dart';
+import '../../data/economics_repository.dart';
 import '../../data/queries.dart';
 import '../../data/supabase_providers.dart';
 import '../../theme/app_colors.dart';
+import '../../ui/errors.dart';
 import '../../ui/format.dart';
 import '../../ui/widgets/app_widgets.dart';
+import '../auth/app_lock.dart';
 import '../auth/auth_controller.dart';
+import '../categories/categories_screen.dart';
 import '../connect_ml/connect_ml_screen.dart';
 import '../warehouses/warehouses_screen.dart';
 
@@ -197,6 +201,37 @@ class SettingsScreen extends ConsumerWidget {
                 ],
               ),
             ),
+            const SizedBox(height: 10),
+            SurfaceCard(
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const CategoriesScreen()),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.category_outlined, color: AppColors.primary),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Categorías',
+                            style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.textPrimary)),
+                        Text('Crear, renombrar o eliminar tus categorías de productos',
+                            style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
+                      ],
+                    ),
+                  ),
+                  const Icon(Icons.chevron_right, color: AppColors.textFaint),
+                ],
+              ),
+            ),
+            const SizedBox(height: 18),
+            const SectionHeader('Costeo', uppercase: true),
+            const SizedBox(height: 10),
+            const _CostPolicyCard(),
             const SizedBox(height: 18),
             const SectionHeader('Cotización', uppercase: true),
             const SizedBox(height: 10),
@@ -244,6 +279,10 @@ class SettingsScreen extends ConsumerWidget {
                 ],
               ),
             ),
+            const SizedBox(height: 18),
+            const SectionHeader('Seguridad', uppercase: true),
+            const SizedBox(height: 10),
+            const _BiometricLockCard(),
             const SizedBox(height: 24),
             OutlinedButton.icon(
               onPressed: () => ref.read(authControllerProvider).signOut(),
@@ -264,6 +303,145 @@ class SettingsScreen extends ConsumerWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Bloqueo con Face ID / huella al volver a la app tras inactividad.
+class _BiometricLockCard extends ConsumerWidget {
+  const _BiometricLockCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final available = ref.watch(biometricsAvailableProvider).valueOrNull ?? false;
+    final enabled = ref.watch(appLockEnabledProvider).valueOrNull ?? false;
+    return SurfaceCard(
+      child: Row(
+        children: [
+          const Icon(Icons.fingerprint_rounded, color: AppColors.primary),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Bloqueo biométrico',
+                    style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary)),
+                Text(
+                  available
+                      ? 'Pide Face ID o huella al volver tras '
+                          '${AppLock.timeout.inMinutes} min fuera de la app'
+                      : 'Este dispositivo no tiene biometría configurada',
+                  style:
+                      const TextStyle(fontSize: 12, color: AppColors.textMuted),
+                ),
+              ],
+            ),
+          ),
+          Switch(
+            value: enabled && available,
+            activeColor: AppColors.primary,
+            onChanged: !available
+                ? null
+                : (v) async {
+                    final ok = await setAppLockEnabled(ref, v);
+                    if (!ok && context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                          content: Text(
+                              'No se pudo verificar la biometría; el bloqueo sigue apagado.')));
+                    }
+                  },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Política de valuación del costo de lo vendido (FIFO / promedio / última /
+/// manual). Cambia cómo se calcula la ganancia neta en toda la app.
+class _CostPolicyCard extends ConsumerWidget {
+  const _CostPolicyCard();
+
+  Future<void> _set(BuildContext context, WidgetRef ref, CostPolicy p) async {
+    final userId = ref.read(supabaseClientProvider).auth.currentUser?.id ?? '';
+    try {
+      await ref.read(economicsRepositoryProvider).setCostPolicy(p, userId);
+      ref.invalidate(costPolicyProvider);
+      ref.invalidate(economicsProvider);
+      ref.invalidate(saleProfitsProvider);
+      ref.invalidate(dashboardProvider);
+    } catch (e) {
+      if (context.mounted) {
+        showAppError(context, e, title: 'No se pudo cambiar la política');
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final current =
+        ref.watch(costPolicyProvider).valueOrNull ?? CostPolicy.fifo;
+    return SurfaceCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Política de costo de lo vendido',
+              style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textPrimary)),
+          const SizedBox(height: 4),
+          const Text(
+            'Define qué costo de compra se usa para calcular la ganancia '
+            'de cada venta y la rentabilidad por producto.',
+            style: TextStyle(
+                fontSize: 12, color: AppColors.textMuted, height: 1.4),
+          ),
+          const SizedBox(height: 12),
+          for (final p in CostPolicy.values) ...[
+            InkWell(
+              onTap: () => _set(context, ref, p),
+              borderRadius: BorderRadius.circular(10),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 7),
+                child: Row(
+                  children: [
+                    Icon(
+                      p == current
+                          ? Icons.radio_button_checked
+                          : Icons.radio_button_off,
+                      size: 19,
+                      color:
+                          p == current ? AppColors.primary : AppColors.textFaint,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(p.label,
+                              style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  color: p == current
+                                      ? AppColors.textPrimary
+                                      : AppColors.textBody)),
+                          Text(p.description,
+                              style: const TextStyle(
+                                  fontSize: 11, color: AppColors.textMuted)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }
