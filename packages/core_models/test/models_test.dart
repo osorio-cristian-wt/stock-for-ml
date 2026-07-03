@@ -111,6 +111,32 @@ void main() {
     expect(s.gross, 301.5);
   });
 
+  test('Sale.gross prefers the multi-item total_amount', () {
+    final s = Sale.fromJson({
+      'id': 's3',
+      'profile_id': 'u1',
+      'ml_order_id': 'ORDER-2',
+      'quantity': 5, // 2 productos distintos: unit_price ya no representa
+      'unit_price': 10,
+      'total_amount': 1234.5,
+    });
+    expect(s.totalAmount, 1234.5);
+    expect(s.gross, 1234.5);
+  });
+
+  test('SaleItem.fromJson computes the line total', () {
+    final i = SaleItem.fromJson({
+      'id': 'i1',
+      'sale_id': 's3',
+      'product_id': 'p1',
+      'title': 'Auriculares',
+      'quantity': 2,
+      'unit_price': '150.25',
+    });
+    expect(i.lineTotal, 300.5);
+    expect(i.title, 'Auriculares');
+  });
+
   test('Customer round-trips optional fiscal data', () {
     final c = Customer.fromJson({
       'id': 'c1',
