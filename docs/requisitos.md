@@ -1,6 +1,6 @@
 # Requisitos — stock-for-ml
 
-> Estado: vivo. Última actualización: 2026-06-18.
+> Estado: vivo. Última actualización: 2026-07-02.
 > Deriva de las decisiones en [research/04-decisiones-pendientes.md](research/04-decisiones-pendientes.md).
 > Diseño detallado de estados de stock, sincronización con ML (anti-ciclo),
 > reconciliación de órdenes y clasificación por LLM: ver
@@ -27,20 +27,52 @@
 
 ### Productos y catálogo
 - **RF-04** Crear/editar/eliminar productos internos (SKU, título, costo de
-  compra en USD, foto, notas).
-- **RF-05** Importar las publicaciones existentes de ML como productos/listings.
-- **RF-06** Vincular un producto interno con una publicación de ML.
+  compra en USD, foto, notas). Carga **barcode-first**: el escáner distingue
+  GTIN (EAN/UPC → rama catálogo) de SKU alfanumérico (alta manual).
+- **RF-05** Importar las publicaciones existentes de ML como productos/listings,
+  **sin duplicar y sin pisar el stock local**: match por GTIN/SKU; si el
+  producto ya existe se vincula el listing y se empuja el stock local a ML; el
+  stock de ML se siembra solo en productos nuevos (`initial_sync`, origin=ml).
+- **RF-06** Vincular un producto interno con una publicación de ML (el título
+  de la publicación queda desacoplado del título de stock).
 - **RF-07** Soportar variaciones de una publicación (talle/color/etc.) con stock
-  por variación.
+  por variación. *Alcance actual:* la app **espeja** las variaciones y su stock
+  ML (`listing_variations`) y las muestra en el detalle; el stock por variación
+  se administra en ML (el push automático omite publicaciones con variaciones
+  porque ML rechaza `available_quantity` a nivel ítem en esos casos).
+- **RF-23** Clasificación asistida de productos en **cascada**: catálogo ML por
+  GTIN → predictor de categoría de ML → LLM como último fallback
+  (`classify-product`, Claude Haiku); categorías internas propias + marca.
 
 ### Stock
-- **RF-08** Ver el stock actual por producto.
-- **RF-09** Registrar movimientos de stock (compra, venta, ajuste, devolución).
-- **RF-10** Al confirmarse una venta en ML, descontar stock automáticamente.
+- **RF-08** Ver el stock actual por producto, con desglose por depósito y por
+  bucket (`on_hand` / `reserved` / `incoming`; disponible = on_hand − reserved).
+- **RF-09** Registrar movimientos de stock (compra, venta, ajuste, devolución)
+  en un ledger append-only con `origin` (`ml`/`user`/`system`) anti-ciclo.
+- **RF-10** Al confirmarse una venta en ML, descontar stock automáticamente
+  (reconciliación idempotente por estado de orden + envío; la venta reserva,
+  el despacho descuenta físico).
 - **RF-11** Empujar el stock actualizado a ML (`PUT /items`) cuando Supabase es
-  la fuente de verdad.
+  la fuente de verdad (solo movimientos `user`/`system`; cola con reintentos).
 - **RF-12** Alertar (push + in-app) cuando el stock cae por debajo de un umbral
   configurable; marcar como "sin stock" cuando llega a 0.
+- **RF-24** Gestionar **depósitos**: crear, marcar principal (= depósito de
+  despacho, del que ML descuenta), toggle vendible; ML publica la suma de los
+  depósitos vendibles.
+- **RF-25** **Transferencias entre depósitos** como control interno (par de
+  movimientos balanceados; no altera el disponible → no empuja a ML).
+- **RF-26** Historial por producto: línea de tiempo que une movimientos de
+  stock (compras, ajustes, transferencias) y ventas de ML.
+
+### Compras
+- **RF-27** Registrar **compras a proveedor** (proveedores reutilizables):
+  borrador → agregar items por búsqueda/escaneo de SKU (si no existe, alta y
+  vuelta al flujo) → cerrar la compra impacta stock (un movimiento por línea,
+  `reason=purchase`, referencia a la compra, depósito elegido).
+- **RF-28** **OCR de factura**: foto → Edge Function `parse-invoice` (Claude
+  Haiku, visión + salida estructurada) → borrador de líneas con match por
+  SKU/GTIN → el usuario aprueba antes de crear los items. Nunca crea sin
+  aprobación.
 
 ### Precios, comisiones y rentabilidad
 - **RF-13** Mostrar precio de venta (ARS) de cada publicación.
@@ -92,8 +124,27 @@
 
 - **v0.1 (MVP):** Auth + OAuth ML, importar publicaciones + productos internos,
   costo USD + TC, comisión/ganancia/markup/margen, stock manual, comparativa de
-  precios en ML.
+  precios en ML. ✅
 - **v0.2:** webhook de órdenes → descuento automático + push de stock a ML,
-  alertas de stock bajo + push.
-- **v0.3+:** comparativa entre productos, variaciones, dashboard de métricas,
-  edición de publicaciones desde la app.
+  alertas de stock bajo in-app. ✅ (push FCM pendiente de credenciales)
+- **v0.3:** depósitos + transferencias, compras + OCR de factura, historial,
+  comparativa entre productos, variaciones (espejo), dashboard. ✅
+- **v0.4+:** push FCM (RF-22), publicar borrador en ML desde la app
+  (`publish-item`, requiere scope de escritura), stock por variación
+  gestionado desde la app, import selectivo de publicaciones.
+
+## 6. Estado de implementación (auditoría 2026-07-02)
+
+| Requisito | Estado |
+|-----------|--------|
+| RF-01…RF-06, RF-08…RF-18, RF-20, RF-21, RF-23…RF-28 | ✅ Implementado (tests en verde: pgTAP 61, Deno 12, core_models 18, widget 1) |
+| RF-07 variaciones | 🟡 Parcial: espejo `listing_variations` + UI en detalle; push por variación no soportado (se omite con nota en la cola) |
+| RF-19 comparativa entre productos | ✅ Pantalla "Comparativa" (margen/markup/ganancia/rotación 30d) desde Productos |
+| RF-22 push FCM | ⏸ Bloqueado por credenciales Firebase/APNs del dueño ([firebase.md](firebase.md)) |
+| RNF-01…04, RNF-06, RNF-08 | ✅ (RLS, colas idempotentes, rate-friendly, tests, entornos 743x + [setup.md](setup.md)) |
+| RNF-05 offline | 🟡 Realtime OK; sin cache local persistente (deseable) |
+| RNF-07 observabilidad | 🟡 Errores quedan en `ml_events.error` / `stock_push_queue.error` (sin UI de diagnóstico) |
+
+Fuera de requisitos pero decidido con el dueño: crear borrador en ML
+(`publish-item`) espera confirmación de scopes OAuth de escritura; el import
+selectivo de ML es opcional (el masivo desde Ajustes cubre el caso).

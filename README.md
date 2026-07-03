@@ -32,7 +32,7 @@ Supabase es la **fuente de verdad del stock**; los cambios se empujan a ML.
 ```
 stock-for-ml/
 ├─ apps/
-│  └─ mobile/                # App Flutter (UI se define más adelante)
+│  └─ mobile/                # App Flutter (Riverpod) — UI completa en lib/src/
 ├─ packages/
 │  └─ core_models/           # Modelos Dart compartidos (+ tests)
 ├─ supabase/
@@ -42,6 +42,7 @@ stock-for-ml/
 │  ├─ tests/                 # Tests pgTAP de la base
 │  └─ seed.sql               # Datos de desarrollo
 ├─ docs/                     # Investigación + requisitos
+├─ scripts/                  # app.ps1: run/build por entorno (ver docs/setup.md)
 ├─ pubspec.yaml              # Workspace raíz (Pub Workspaces)
 └─ LICENSE                   # MIT
 ```

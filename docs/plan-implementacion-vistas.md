@@ -365,7 +365,10 @@ en ML pausada para revisión. **Confirmar scopes OAuth con el dueño antes.**
 - Postgres: `supabase test db` (pgTAP) — `close_purchase`, `add_purchase_item`,
   `transfer_stock` y `set_default_warehouse` cubiertos en
   `supabase/tests/02_warehouses_purchases_test.sql`.
-- Deno: `deno test` en `supabase/functions/tests/` — `upsertItem` dedup, `parse-invoice`.
+- Deno: `deno test` en `supabase/functions/tests/` — cubre comparación,
+  economics, meli/PKCE/fx y helpers de items (`variationRows`, `pgrestQuote`).
+  La lógica de `upsertItem`/`parse-invoice` que toca la red/DB no tiene test
+  unitario (se extraen helpers puros cuando se necesita cubrir algo).
 - Commit por fase (mensaje convencional; co-author Claude). No pushear salvo pedido.
 
 ## 7. Checklist de progreso
@@ -437,3 +440,44 @@ Quedan solo dos ítems fuera de alcance por decisión: la UI de import selectivo
 de ML (opcional; el import masivo desde Ajustes ya cubre el caso) y **crear
 borrador en ML** (`publish-item`), bloqueado hasta confirmar con el dueño los
 scopes OAuth de escritura.
+
+**Addendum auditoría 2026-07-02 (RF-07 + RF-19 + fixes):**
+- **RF-07 variaciones (espejo):** `upsertItem` ahora refleja las variaciones del
+  item en `listing_variations` (upsert + poda de las que ML ya no reporta;
+  helper puro `variationRows` con test Deno). Migración
+  `20260702130000_listing_variations_realtime.sql` (realtime + replica identity).
+  Modelo `ListingVariation` en core_models (label "Rojo · XL");
+  `ConnectionRepository.watchListingVariations` + `listingVariationsProvider`;
+  tarjeta "Variaciones (ML)" en el detalle de producto. El stock por variación
+  se sigue administrando en ML.
+- **Fix push-stock × variaciones:** ML rechaza `available_quantity` a nivel ítem
+  cuando la publicación tiene variaciones → `push-stock` ahora omite esas
+  publicaciones (nota informativa en `stock_push_queue.error`) en vez de entrar
+  en el loop de reintentos.
+- **Fix filtro `or` de dedup:** los valores GTIN/SKU se citan con `pgrestQuote`
+  para que `,`/`(`/`)` dentro de un SKU no rompan la sintaxis de PostgREST.
+- **RF-19 comparativa entre productos:** `productComparisonProvider` (economics
+  + rotación 30 días desde ventas) y `product_comparison_screen.dart`
+  (orden por margen/markup/ganancia/rotación; internos sin economics al final);
+  entrada con ícono en el header de Productos.
+- Requisitos actualizados en [requisitos.md](requisitos.md) §6 (matriz de
+  estado): lo único abierto es RF-22 (push FCM, bloqueado por credenciales),
+  RNF-05/07 parciales y los dos ítems por decisión de arriba.
+
+**Addendum 2026-07-02 (2): vista por depósito + desglose siempre visible.**
+- Detalle de producto: "Stock por depósito" ahora lista **todos** los depósitos
+  (0 si no hay stock) con chips **Reservado**/**En camino** (antes texto chico
+  y filas ocultas si todo era 0).
+- Nueva `features/warehouses/warehouse_detail_screen.dart` (tap en un depósito
+  desde Ajustes → Depósitos): chips de rol, totales por bucket, productos con
+  stock en ese depósito (tap → detalle; botón **transferir con origen
+  preseleccionado** — `TransferSheet` acepta `fromWarehouseId`) y **historial
+  del depósito** (ledger completo, incluye reservas/despachos ML, con bucket).
+- Repos/providers nuevos: `watchStockInWarehouse`, `watchAllStock`,
+  `watchMovementsInWarehouse` en InventoryRepository;
+  `stockInWarehouseProvider`, `allStockStreamProvider`,
+  `warehouseTotalsProvider` (línea "N productos · M disp." en la lista),
+  `warehouseMovementsProvider`.
+- Nota: vender fuera de ML hoy = ajuste con motivo "Venta" (descuenta y
+  empuja a ML) pero sin registro comercial (importe/canal no van a `sales`);
+  flujo de venta local queda como candidato a fase nueva.
