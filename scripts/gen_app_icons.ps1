@@ -62,12 +62,24 @@ function New-IconBitmap([int]$size, [double]$iconFrac, [bool]$opaque) {
   return $final
 }
 
-function Save-Icon([int]$size, [double]$frac, [bool]$opaque, [string]$path) {
+function Save-Icon([int]$size, [double]$frac, [bool]$opaque, [string]$path, [bool]$stripAlpha = $false) {
   $dir = Split-Path -Parent $path
   if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force $dir | Out-Null }
   $bmp = New-IconBitmap $size $frac $opaque
-  $bmp.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
-  $bmp.Dispose()
+  if ($stripAlpha) {
+    # App Store Connect rechaza íconos iOS con canal alpha (incluido el de 1024x1024).
+    $rgb = New-Object System.Drawing.Bitmap($size, $size, [System.Drawing.Imaging.PixelFormat]::Format24bppRgb)
+    $gRgb = [System.Drawing.Graphics]::FromImage($rgb)
+    $gRgb.Clear($carbon)
+    $gRgb.DrawImage($bmp, 0, 0, $size, $size)
+    $gRgb.Dispose()
+    $bmp.Dispose()
+    $rgb.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
+    $rgb.Dispose()
+  } else {
+    $bmp.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
+    $bmp.Dispose()
+  }
   Write-Host "  $path"
 }
 
@@ -94,7 +106,7 @@ $iosIcons = @(
   @('Icon-App-1024x1024@1x.png', 1024)
 )
 foreach ($i in $iosIcons) {
-  Save-Icon $i[1] 0.66 $true (Join-Path $ios $i[0])
+  Save-Icon $i[1] 0.66 $true (Join-Path $ios $i[0]) $true
 }
 
 Write-Host 'Listo.'
