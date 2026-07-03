@@ -1,0 +1,93 @@
+workflows:
+  stock_for_ml_ios_release:
+    name: Stock For ML iOS Release
+    max_build_duration: 120
+    instance_type: mac_mini_m2
+
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+      groups:
+        - Supabase
+      vars:
+        APP_PATH: apps/mobile
+        BUNDLE_ID: com.stockforml.app
+        IOS_MIN_VERSION: '14.0'
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.stockforml.app
+
+    integrations:
+      app_store_connect: CodemagicApiKeyV2
+
+    cache:
+      cache_paths:
+        - $HOME/.pub-cache
+        - $HOME/Library/Caches/CocoaPods
+        - $HOME/.cocoapods/repos
+
+    scripts:
+      - name: Bootstrap workspace
+        script: |
+          set -euo pipefail
+          cd "$CM_BUILD_DIR"
+          flutter pub get
+
+      - name: Prepare iOS project
+        script: |
+          set -euo pipefail
+          cd "$CM_BUILD_DIR/$APP_PATH"
+
+          flutter pub get
+
+          if [ ! -f ios/Podfile ]; then
+            flutter create --platforms=ios .
+          fi
+
+          if grep -q "^# platform :ios" ios/Podfile; then
+            sed -i '' "s/^# platform :ios.*/platform :ios, '$IOS_MIN_VERSION'/" ios/Podfile
+          elif grep -q "^platform :ios" ios/Podfile; then
+            sed -i '' "s/^platform :ios.*/platform :ios, '$IOS_MIN_VERSION'/" ios/Podfile
+          else
+            { echo "platform :ios, '$IOS_MIN_VERSION'"; cat ios/Podfile; } > ios/Podfile.tmp
+            mv ios/Podfile.tmp ios/Podfile
+          fi
+
+          if [ -f ios/Runner.xcodeproj/project.pbxproj ]; then
+            sed -i '' "s/IPHONEOS_DEPLOYMENT_TARGET = 12.0;/IPHONEOS_DEPLOYMENT_TARGET = $IOS_MIN_VERSION;/g" ios/Runner.xcodeproj/project.pbxproj
+          fi
+
+          cd ios
+          pod install --repo-update
+          cd ..
+
+      - name: Set up Xcode signing with fetched profiles
+        script: |
+          set -euo pipefail
+          cd "$CM_BUILD_DIR/$APP_PATH"
+          xcode-project use-profiles --project ios/Runner.xcodeproj
+
+      - name: Build IPA
+        script: |
+          set -euo pipefail
+          cd "$CM_BUILD_DIR/$APP_PATH"
+
+          flutter build ipa --release \
+            --build-number="$PROJECT_BUILD_NUMBER" \
+            --export-options-plist="$HOME/export_options.plist"
+
+          IPA_PATH="$(find build/ios -type f -name '*.ipa' | head -n 1 || true)"
+
+          if [ -z "$IPA_PATH" ]; then
+            echo "No IPA generated under build/ios"
+            find build/ios -maxdepth 4 -type f | head -n 200 || true
+            exit 1
+          fi
+
+          mkdir -p "$CM_BUILD_DIR/build_artifacts"
+          cp "$IPA_PATH" "$CM_BUILD_DIR/build_artifacts/stock-for-ml.ipa"
+
+    artifacts:
+      - build_artifacts/*.ipa
+      - /tmp/xcodebuild_logs/*.log
