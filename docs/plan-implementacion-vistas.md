@@ -511,3 +511,33 @@ scopes OAuth de escritura.
 - **Onboarding import:** tras conectar ML (deep-link o "Ya autoricé"),
   `offerInitialImport` ofrece importar las publicaciones ahí mismo con
   progreso bloqueante e invalidación de products/economics.
+
+**Addendum 2026-07-03 (2): venta multi-ítem + fixes de auditoría del dueño.**
+- **Venta = flujo de compra, desde la pestaña Ventas.** FAB "Nueva venta" →
+  `local_sale_screen.dart` (carrito multi-producto: escáner continuo
+  `sale_scan_screen.dart` + búsqueda manual; cliente opcional; depósito;
+  PopScope con confirmación de descarte). El botón "Vender" salió del detalle
+  del producto. Tocar una venta en la lista abre su detalle con las líneas.
+- **`sale_items` (migración `20260703150000_sale_items_multi.sql`):** una
+  línea por producto para ventas de ML (las órdenes multi-ítem ya no se
+  aplastan al primer producto — `orders.ts` refleja `order_items` con
+  delete+insert idempotente y guarda `sales.total_amount` real) y para ventas
+  locales. Índices por sale_id y product_id. Modelos `SaleItem` y
+  `Sale.totalAmount` (`gross` lo prefiere).
+- **`create_local_sale` v2 — transaccional e idempotente:** recibe
+  `p_items jsonb`; VALIDA antes de escribir que cada línea esté cubierta por
+  el disponible del depósito elegido (si no: excepción y no queda nada a
+  medias — arregla el caso "depósito fantasma de despacho": venta registrada
+  sin descontar stock porque el depósito no vendible/vacío no afecta
+  `current_stock`); `p_sale_id` opcional hace el reintento no-op. pgTAP 03
+  reescrito (36 asserts: multi-ítem, transaccionalidad, idempotencia).
+- **Proveedor/cliente = ventana compartida** `parties/party_form_sheet.dart`
+  (nombre obligatorio; razón social/CUIT/tel/email opcionales), usada por el
+  picker de proveedores de la compra y el de clientes de la venta.
+- **Historial por producto:** los DOS movimientos de una transferencia se
+  colapsan en UNA entrada "Transferencia · Depósito A → Depósito B"; cada fila
+  tiene chevron "›" que abre el detalle (precio de venta, total, depósitos,
+  nota; el costo de compra se busca lazy en purchase_items para no cargar la
+  consulta). Las ventas multi-ítem aparecen vía `sale_items` (índice por
+  product_id).
+- **Navegación:** botón "Cancelar" en Movimientos (resetea ruta y cantidades).
