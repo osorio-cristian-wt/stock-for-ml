@@ -55,8 +55,17 @@ async function reconcileOrder(
   const totalFee = items.reduce((s, i) => s + (i.sale_fee ?? 0), 0);
   const firstItem = items[0];
 
-  // Aggregate desired effect per internal product (orders may repeat an item).
+  // Aggregate desired effect per internal product (orders may repeat an item)
+  // and collect one line per order item for sale_items.
   const targets = new Map<string, { product_id: string; reserved: number; on_hand: number }>();
+  const lines: {
+    ml_item_id: string;
+    product_id: string | null;
+    title: string | null;
+    quantity: number;
+    unit_price: number;
+    sale_fee: number;
+  }[] = [];
   let fulfillment: Fulfillment = "reserved";
   for (const oi of items) {
     const itemId = oi.item?.id;
@@ -68,6 +77,16 @@ async function reconcileOrder(
       .eq("profile_id", account.profile_id)
       .eq("ml_item_id", itemId)
       .maybeSingle();
+
+    lines.push({
+      ml_item_id: itemId,
+      product_id: listing?.product_id ?? null,
+      title: oi.item?.title ?? null,
+      quantity: qty,
+      unit_price: oi.unit_price ?? 0,
+      sale_fee: oi.sale_fee ?? 0,
+    });
+
     if (!listing?.product_id) continue;
 
     const eff = effectFor(order.status, shipment?.status, qty);
@@ -79,19 +98,34 @@ async function reconcileOrder(
   }
 
   // 1) Upsert the sale summary (idempotent on profile_id + ml_order_id).
-  await admin.from("sales").upsert({
+  const { data: saleRow } = await admin.from("sales").upsert({
     profile_id: account.profile_id,
     ml_order_id: orderId,
     ml_item_id: firstItem?.item?.id ?? null,
+    // Single-item orders keep the direct product link; multi-item orders rely
+    // on sale_items (one row per product).
+    product_id: lines.length === 1 ? lines[0].product_id : null,
     quantity: totalQty || 1,
     unit_price: firstItem?.unit_price ?? 0,
     currency_id: order.currency_id ?? "ARS",
     sale_fee: totalFee,
+    total_amount: order.total_amount ?? null,
     status: order.status,
     fulfillment_status: fulfillment,
     sold_at: order.date_created ?? null,
     raw: order as unknown as Record<string, unknown>,
-  }, { onConflict: "profile_id,ml_order_id" });
+  }, { onConflict: "profile_id,ml_order_id" }).select("id").single();
+
+  // 1b) Mirror the order lines (delete+insert scoped to this sale keeps the
+  // reconciliation idempotent without a partial-unique upsert).
+  if (saleRow?.id && lines.length > 0) {
+    await admin.from("sale_items").delete().eq("sale_id", saleRow.id);
+    await admin.from("sale_items").insert(lines.map((l) => ({
+      profile_id: account.profile_id,
+      sale_id: saleRow.id,
+      ...l,
+    })));
+  }
 
   // 2) Reconcile the ledger (origin=ml inside the function => no push to ML).
   if (targets.size > 0) {
