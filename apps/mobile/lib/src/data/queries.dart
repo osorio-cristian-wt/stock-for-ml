@@ -125,6 +125,11 @@ final suppliersProvider = FutureProvider<List<Supplier>>((ref) {
   return ref.watch(suppliersRepositoryProvider).all();
 });
 
+/// The user's customers (for the local-sale picker).
+final customersProvider = FutureProvider<List<Customer>>((ref) {
+  return ref.watch(customersRepositoryProvider).all();
+});
+
 /// A single product's history: purchases, adjustments, transfers and ML sales,
 /// merged into one newest-first timeline. ML-origin ledger entries are omitted
 /// because the sale itself already represents them.
@@ -166,14 +171,21 @@ final productHistoryProvider =
       ProductHistoryEntry(
         date: s.soldAt,
         kind: HistoryKind.sale,
-        label: 'Venta ML',
+        label: s.isLocal ? 'Venta local' : 'Venta ML',
         signedQty: -s.quantity,
         reference: s.mlOrderId,
       ),
   ];
 
+  // A local sale writes both a sales row and a user-origin `sale` movement
+  // referencing it — keep only the sale entry to avoid double lines.
+  final localSaleIds = {for (final s in sales.where((s) => s.isLocal)) s.id};
+
   for (final m in movements) {
     if (m.origin == StockOrigin.ml) continue; // represented by the sale itself
+    if (m.reason == StockReason.sale && localSaleIds.contains(m.reference)) {
+      continue;
+    }
     final (kind, label) = switch (m.reason) {
       StockReason.purchase ||
       StockReason.purchaseReceived =>

@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'alerts_repository.dart';
 import 'catalog_repository.dart';
 import 'connection_repository.dart';
+import 'customers_repository.dart';
 import 'economics_repository.dart';
 import 'inventory_repository.dart';
 import 'price_comparison_repository.dart';
@@ -64,4 +65,8 @@ final purchasesRepositoryProvider = Provider<PurchasesRepository>((ref) {
 
 final suppliersRepositoryProvider = Provider<SuppliersRepository>((ref) {
   return SuppliersRepository(ref.watch(supabaseClientProvider));
+});
+
+final customersRepositoryProvider = Provider<CustomersRepository>((ref) {
+  return CustomersRepository(ref.watch(supabaseClientProvider));
 });

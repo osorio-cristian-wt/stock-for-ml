@@ -17,6 +17,11 @@ class SalesScreen extends ConsumerWidget {
     final productList =
         ref.watch(productsStreamProvider).valueOrNull ?? const <Product>[];
     final products = {for (final p in productList) p.id: p};
+    final customers = {
+      for (final c
+          in ref.watch(customersProvider).valueOrNull ?? const <Customer>[])
+        c.id: c,
+    };
 
     return Scaffold(
       body: SafeArea(
@@ -34,7 +39,8 @@ class SalesScreen extends ConsumerWidget {
               const SizedBox(height: 60),
               InlineError(message: '$e', onRetry: () => ref.invalidate(salesProvider)),
             ]),
-            data: (sales) => _SalesList(sales: sales, products: products),
+            data: (sales) => _SalesList(
+                sales: sales, products: products, customers: customers),
           ),
         ),
       ),
@@ -45,10 +51,15 @@ class SalesScreen extends ConsumerWidget {
 double _net(Sale s) => s.netAmount ?? (s.gross - s.saleFee - s.shippingCost);
 
 class _SalesList extends StatelessWidget {
-  const _SalesList({required this.sales, required this.products});
+  const _SalesList({
+    required this.sales,
+    required this.products,
+    required this.customers,
+  });
 
   final List<Sale> sales;
   final Map<String, Product> products;
+  final Map<String, Customer> customers;
 
   @override
   Widget build(BuildContext context) {
@@ -125,7 +136,12 @@ class _SalesList extends StatelessWidget {
             SectionHeader(group.label, uppercase: true),
             const SizedBox(height: 10),
             for (final s in group.sales) ...[
-              _SaleRow(sale: s, product: products[s.productId]),
+              _SaleRow(
+                sale: s,
+                product: products[s.productId],
+                customer:
+                    s.customerId == null ? null : customers[s.customerId],
+              ),
               const SizedBox(height: 9),
             ],
             const SizedBox(height: 8),
@@ -168,15 +184,24 @@ class _DayGroup {
 }
 
 class _SaleRow extends StatelessWidget {
-  const _SaleRow({required this.sale, this.product});
+  const _SaleRow({required this.sale, this.product, this.customer});
 
   final Sale sale;
   final Product? product;
+  final Customer? customer;
 
   @override
   Widget build(BuildContext context) {
     final title = product?.title ?? sale.mlItemId ?? 'Venta';
     final net = _net(sale);
+    final detail = [
+      if (sale.isLocal)
+        customer?.name ?? 'Sin cliente'
+      else
+        '#${sale.mlOrderId ?? '—'}',
+      '${sale.quantity} u',
+      Fmt.clock(sale.soldAt),
+    ].join(' · ');
     return SurfaceCard(
       radius: 15,
       padding: const EdgeInsets.all(11),
@@ -188,15 +213,28 @@ class _SaleRow extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                        color: AppColors.textPrimary)),
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                              color: AppColors.textPrimary)),
+                    ),
+                    const SizedBox(width: 6),
+                    sale.isLocal
+                        ? TagChip('Local',
+                            color: AppColors.primary,
+                            background: AppColors.primarySoft,
+                            bold: true)
+                        : const TagChip('ML', bold: true),
+                  ],
+                ),
                 Text(
-                  '#${sale.mlOrderId} · ${sale.quantity} u · ${Fmt.clock(sale.soldAt)}',
+                  detail,
                   style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
                 ),
               ],

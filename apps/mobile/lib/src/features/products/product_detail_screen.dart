@@ -8,6 +8,7 @@ import '../../theme/app_colors.dart';
 import '../../ui/format.dart';
 import '../../ui/widgets/app_widgets.dart';
 import '../price_comparison/price_comparison_screen.dart';
+import '../sales/local_sale_sheet.dart';
 import '../stock_adjustment/stock_adjustment_sheet.dart';
 import '../stock_adjustment/transfer_sheet.dart';
 import 'product_form_screen.dart';
@@ -497,13 +498,33 @@ class _StockCard extends StatelessWidget {
               ],
             ),
           ),
-          FilledButton(
-            onPressed: () => StockAdjustmentSheet.show(context, product: product),
-            style: FilledButton.styleFrom(
-              minimumSize: const Size(0, 44),
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-            ),
-            child: const Text('Ajustar stock'),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              FilledButton(
+                onPressed: () =>
+                    StockAdjustmentSheet.show(context, product: product),
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size(0, 40),
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                ),
+                child: const Text('Ajustar stock'),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: product.currentStock > 0
+                    ? () => LocalSaleSheet.show(context, product: product)
+                    : null,
+                icon: const Icon(Icons.point_of_sale_rounded, size: 16),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.primary,
+                  side: const BorderSide(color: AppColors.border),
+                  minimumSize: const Size(0, 40),
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                ),
+                label: const Text('Vender'),
+              ),
+            ],
           ),
         ],
       ),
