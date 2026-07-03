@@ -570,3 +570,58 @@ scopes OAuth de escritura.
   viven ahora en `movements_screen.dart`); los flujos `purchase_edit_screen`,
   `purchase_scan_screen`, `local_sale_screen` y `sale_scan_screen` quedaron
   intactos.
+
+**Addendum 2026-07-03 (4): manual de marca + lote operativo grande.**
+- **Marca:** logos extraídos del manual a `docs/brand/` (isotipo oscuro/claro,
+  logo principal, app-icon SVG); widget vectorial `ui/widgets/brand_logo.dart`
+  (BrandMark CustomPainter + BrandLogo lockup) — el logo grande encabeza el
+  Inicio (reemplaza el saludo). Íconos de app generados por
+  `scripts/gen_app_icons.ps1` (GDI+ con supersampling): Android legacy +
+  **adaptive** (`mipmap-anydpi-v26` + fondo Carbón) e iOS (set completo,
+  opacos). `android:label` ahora "Stock for ML".
+- **Migración `20260703180000_sale_ops_batch.sql`:**
+  `products.sale_price` (precio de venta local); `create_local_sale` v3 con
+  **depósito por línea** (`warehouse_id` opcional en p_items, validación
+  agrupada por producto+depósito); `reconcile_order_stock` v2 — reservas y
+  despachos de órdenes ML se **reparten entre depósitos vendibles**
+  (principal primero; liberaciones/devoluciones vuelven a donde estaban;
+  faltantes caen al principal como antes); `stock_push_queue` **legible por el
+  dueño** + RPC `retry_stock_push`; `tg_check_low_stock` v2 (alerta en
+  INSERT/updates de umbral, dedup por alerta sin leer, auto-silencio al
+  reponer); cron `ml-refresh-tokens` pasa a **horario** (umbral 75 min en la
+  función). La renovación on-demand (`getValidAccessToken`) ya existía en
+  todos los consumidores.
+- **Migración `20260703190000_cost_policy.sql`:** enum `cost_policy`
+  (fifo/avg/last/manual) en app_settings, `product_cost_ars()` (costo vigente
+  por política, capas de compras cerradas convertidas a ARS),
+  `v_product_economics` v2 (costo por política; arregla costo manual en ARS
+  que daba 0) y **`v_sale_profit`** (ganancia real por venta = bruto −
+  comisión − envío − COGS). El Inicio, el resumen del mes y el detalle de
+  venta usan la ganancia real; la política se elige en **Ajustes → Costeo**.
+- **Front:** manejo de errores centralizado (`ui/errors.dart`: AppErrors +
+  showAppError con "Detalles"); banner en Inicio "Stock sin subir a ML" con
+  detalle por producto y reintento; `QtyCostSheet` v2 (**auto-guardado al
+  cerrar** el editor de cantidades, tope por disponible del depósito, chips de
+  depósito por línea); tarjeta **"Agregar productos"** (escanear/buscar/factura)
+  en compra y venta con lista + "Guardar" debajo; venta local **multi-depósito**
+  e idempotente (`newSaleId()`); alta de producto con **precio de venta y costo
+  obligatorios** y **enriquecimiento automático por GTIN** (la cascada corre
+  dentro del form → compra/venta/búsqueda autocompletan igual que el escáner);
+  edición rápida del **umbral** en el detalle (y el umbral ahora dispara alertas
+  al crear/editar, no solo al descontar; `isLowStock` cuenta stock 0 sin
+  umbral); **borradores estándar** en Movimientos (la compra recién persiste
+  con el primer producto, se autodescarta si queda vacía, sección "Borradores"
+  con "Limpiar"); selector **ARS/USD** en la cabecera de la compra; lápiz para
+  **editar clientes/proveedores** (PartyFormSheet con initial + updates);
+  **historial colapsable** en el detalle; pantalla **Categorías** (crear/
+  renombrar/eliminar; FK deja productos "sin categoría"); **bloqueo
+  biométrico** opcional (local_auth + shared_preferences; AppLock tras 5 min
+  fuera; FlutterFragmentActivity + USE_BIOMETRIC + NSFaceIDUsageDescription).
+- **Análisis:** `docs/analisis-cola-offline.md` — cola offline idempotente;
+  recomendación B (cola local `pending_ops` con drift) para un lote futuro;
+  la etapa B0 (idempotencia + visibilidad del push) quedó cubierta acá.
+- **Tests:** pgTAP `04_sale_ops_batch_test.sql` (34 asserts: venta
+  multi-depósito, validación agrupada, reconcile v2 reserva/despacho/
+  cancelación, costeo fifo/avg/last/manual, v_sale_profit, alertas v2);
+  test 00 ajustado a la nueva semántica de alertas. Suites: pgTAP 131,
+  Flutter 1, core_models 24, Deno 12 — todo verde; `flutter analyze` limpio.

@@ -97,6 +97,18 @@
 - **RF-19** Comparativa entre productos propios (rentabilidad, margen, rotación).
 - **RF-20** Comparativa de precios contra la competencia **dentro de ML** (catálogo
   / `item_competition`). *(must-have del MVP)*
+- **RF-31** Venta local **multi-depósito** (depósito por línea) e **idempotente**
+  (id generado por el cliente); despacho de órdenes ML repartido entre
+  depósitos vendibles (principal primero). *(2026-07-03)*
+- **RF-32** **Costeo por política** (FIFO / promedio ponderado / última compra /
+  manual, elegible en Ajustes): la ganancia neta por venta y la rentabilidad
+  por producto usan el costo de COMPRA real (`product_cost_ars`,
+  `v_sale_profit`), no solo el costo manual del producto. *(2026-07-03)*
+- **RF-33** **Errores visibles**: manejo centralizado en la app (mensaje claro +
+  detalle técnico) y cola de push a ML visible con reintento desde el Inicio —
+  nada falla en silencio. *(2026-07-03)*
+- **RF-34** **Bloqueo biométrico** opcional (Face ID / huella) al volver a la
+  app tras inactividad. *(2026-07-03)*
 
 ### Notificaciones
 - **RF-21** Recibir webhooks de ML (`orders_v2`, `items`, `items_prices`,
@@ -146,13 +158,13 @@
 
 | Requisito | Estado |
 |-----------|--------|
-| RF-01…RF-06, RF-08…RF-18, RF-20, RF-21, RF-23…RF-30 | ✅ Implementado (tests en verde: pgTAP 61+18, Deno 12, core_models 22, widget 1) |
+| RF-01…RF-06, RF-08…RF-18, RF-20, RF-21, RF-23…RF-34 | ✅ Implementado (tests en verde: pgTAP 131, Deno 12, core_models 24, widget 1) |
 | RF-07 variaciones | 🟡 Parcial: espejo `listing_variations` + UI en detalle; push por variación no soportado (se omite con nota en la cola) |
 | RF-19 comparativa entre productos | ✅ Pantalla "Comparativa" (margen/markup/ganancia/rotación 30d) desde Productos |
 | RF-22 push FCM | ⏸ Bloqueado por credenciales Firebase/APNs del dueño ([firebase.md](firebase.md)) |
 | RNF-01…04, RNF-06, RNF-08 | ✅ (RLS, colas idempotentes, rate-friendly, tests, entornos 743x + [setup.md](setup.md)) |
-| RNF-05 offline | 🟡 Realtime OK; sin cache local persistente (deseable) |
-| RNF-07 observabilidad | 🟡 Errores quedan en `ml_events.error` / `stock_push_queue.error` (sin UI de diagnóstico) |
+| RNF-05 offline | 🟡 Realtime OK; ventas idempotentes al reintentar; cola local persistente analizada en [analisis-cola-offline.md](analisis-cola-offline.md) |
+| RNF-07 observabilidad | 🟡 `stock_push_queue` ahora visible en la app (banner + reintento); `ml_events.error` sigue solo en base |
 
 Fuera de requisitos pero decidido con el dueño: crear borrador en ML
 (`publish-item`) espera confirmación de scopes OAuth de escritura; el import

@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Ícono de app: caja en trazo esmeralda sobre Carbón (Manual de Marca §01).
+       Fuente vectorial de los PNG generados por scripts/gen_app_icons.ps1.
+       El radio de esquina lo aplican los launchers (iOS/adaptive). -->
+  <rect width="1024" height="1024" fill="#0d0f13"/>
+  <g transform="translate(174,174) scale(10.5625)">
+    <path d="M32 6 L56 18 L56 46 L32 58 L8 46 L8 18 Z" fill="none" stroke="#10b981" stroke-width="3.2" stroke-linejoin="round"/>
+    <path d="M8 18 L32 30 L56 18" fill="none" stroke="#10b981" stroke-width="3.2" stroke-linejoin="round"/>
+    <path d="M32 30 L32 58" fill="none" stroke="#10b981" stroke-width="3.2"/>
+    <path d="M20 12 L44 24" fill="none" stroke="#10b981" stroke-width="3.2" opacity="0.5"/>
+  </g>
+</svg>

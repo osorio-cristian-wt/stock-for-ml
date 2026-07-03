@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <!-- Isotipo Stock for ML — versión clara (trazos Carbón, para fondos claros e impresión).
+       Extraído del Manual de Marca v1.0 (docs/Stock for ML - Manual de Marca.dc.html). -->
+  <path d="M32 6 L56 18 L56 46 L32 58 L8 46 L8 18 Z" fill="none" stroke="#0d0f13" stroke-width="3.2" stroke-linejoin="round"/>
+  <path d="M8 18 L32 30 L56 18" fill="none" stroke="#0d0f13" stroke-width="3.2" stroke-linejoin="round"/>
+  <path d="M32 30 L32 58" fill="none" stroke="#0d0f13" stroke-width="3.2"/>
+  <path d="M20 12 L44 24" fill="none" stroke="#0e9c6e" stroke-width="3.2"/>
+</svg>
