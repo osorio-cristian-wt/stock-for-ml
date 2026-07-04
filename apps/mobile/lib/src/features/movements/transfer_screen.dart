@@ -3,11 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../data/pending_ops_service.dart';
 import '../../data/queries.dart';
 import '../../data/supabase_providers.dart';
 import '../../theme/app_colors.dart';
 import '../../ui/errors.dart';
 import '../../ui/widgets/app_widgets.dart';
+import '../../util/uuid.dart';
 import '../scan/code_scanner_screen.dart';
 
 /// Transferencia de stock entre depósitos (se abre desde el speed dial de la
@@ -111,34 +113,65 @@ class _TransferScreenState extends ConsumerState<TransferScreen> {
     if (lines.isEmpty || !_ready) return;
     setState(() => _busy = true);
     final repo = ref.read(inventoryRepositoryProvider);
+    final fromName = warehouses[_fromId]?.name ?? 'Origen';
+    final toName = warehouses[_toId]?.name ?? 'Destino';
     final moved = <(String title, int qty)>[];
+    final queued = <(String title, int qty)>[];
     String? error;
-    try {
-      for (final e in lines) {
+    for (var i = 0; i < lines.length; i++) {
+      final e = lines[i];
+      final title = products[e.key]?.title ?? 'Producto';
+      // Reference del cliente por línea: si el RPC entró pero se cortó la
+      // respuesta, la re-subida desde la cola offline es no-op.
+      final reference = newUuid();
+      try {
         await repo.transferStock(
           productId: e.key,
           fromWarehouseId: _fromId!,
           toWarehouseId: _toId!,
           qty: e.value,
+          reference: reference,
         );
-        moved.add((products[e.key]?.title ?? 'Producto', e.value));
+        moved.add((title, e.value));
+      } catch (err) {
+        if (AppErrors.isOffline(err)) {
+          // Sin red: esta línea (con SU reference, por si llegó a entrar) y
+          // las que faltaban quedan en la cola local, una op por línea.
+          final service = ref.read(pendingOpsServiceProvider);
+          for (var j = i; j < lines.length; j++) {
+            final l = lines[j];
+            final t = products[l.key]?.title ?? 'Producto';
+            await service.enqueueTransfer(
+              reference: j == i ? reference : newUuid(),
+              productId: l.key,
+              fromWarehouseId: _fromId!,
+              toWarehouseId: _toId!,
+              qty: l.value,
+              summary: 'Transferencia · $t ×${l.value} · $fromName → $toName',
+            );
+            queued.add((t, l.value));
+          }
+        } else {
+          error = AppErrors.friendly(err);
+        }
+        break;
       }
-    } catch (e) {
-      error = AppErrors.friendly(e);
     }
     if (!mounted) return;
+    final processed = moved.length + queued.length;
     setState(() {
       _busy = false;
-      for (final (i, _) in moved.indexed) {
+      for (var i = 0; i < processed; i++) {
         _qty.remove(lines[i].key);
       }
     });
     await showModalBottomSheet<void>(
       context: context,
       builder: (_) => _SummarySheet(
-        fromName: warehouses[_fromId]?.name ?? 'Origen',
-        toName: warehouses[_toId]?.name ?? 'Destino',
+        fromName: fromName,
+        toName: toName,
         moved: moved,
+        queued: queued,
         error: error,
       ),
     );
@@ -481,23 +514,27 @@ class _StepBtn extends StatelessWidget {
   }
 }
 
-/// Detalle de lo movido, mostrado al confirmar.
+/// Detalle de lo movido (y lo que quedó en la cola offline), mostrado al
+/// confirmar.
 class _SummarySheet extends StatelessWidget {
   const _SummarySheet({
     required this.fromName,
     required this.toName,
     required this.moved,
+    this.queued = const [],
     this.error,
   });
 
   final String fromName;
   final String toName;
   final List<(String, int)> moved;
+  final List<(String, int)> queued;
   final String? error;
 
   @override
   Widget build(BuildContext context) {
     final units = moved.fold<int>(0, (a, m) => a + m.$2);
+    final pending = queued.isNotEmpty;
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(22, 16, 22, 22),
@@ -506,15 +543,27 @@ class _SummarySheet extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Icon(
-              error == null ? Icons.check_circle_rounded : Icons.error_outline,
-              color: error == null ? AppColors.primary : AppColors.danger,
+              error != null
+                  ? Icons.error_outline
+                  : pending
+                      ? Icons.schedule_rounded
+                      : Icons.check_circle_rounded,
+              color: error != null
+                  ? AppColors.danger
+                  : pending
+                      ? AppColors.warning
+                      : AppColors.primary,
               size: 34,
             ),
             const SizedBox(height: 10),
             Text(
-              error == null
-                  ? 'Movimiento realizado'
-                  : 'Movimiento incompleto',
+              error != null
+                  ? 'Movimiento incompleto'
+                  : pending
+                      ? (moved.isEmpty
+                          ? 'Quedó pendiente de subir'
+                          : 'Parte quedó pendiente de subir')
+                      : 'Movimiento realizado',
               textAlign: TextAlign.center,
               style: const TextStyle(
                   fontSize: 17,
@@ -559,6 +608,37 @@ class _SummarySheet extends StatelessWidget {
                     style: const TextStyle(
                         fontSize: 12, color: AppColors.textMuted)),
               ),
+            if (pending) ...[
+              const SizedBox(height: 6),
+              for (final (title, qty) in queued)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.schedule_rounded,
+                          size: 16, color: AppColors.warning),
+                      const SizedBox(width: 9),
+                      Expanded(
+                        child: Text(title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                fontSize: 13, color: AppColors.textBody)),
+                      ),
+                      Text('$qty u.',
+                          style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.warning)),
+                    ],
+                  ),
+                ),
+              const Text(
+                'Sin conexión: esas líneas quedaron en "Pendientes de subir" '
+                '(Movimientos) y se suben solas al reconectar.',
+                style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+              ),
+            ],
             if (error != null) ...[
               const SizedBox(height: 8),
               Text(

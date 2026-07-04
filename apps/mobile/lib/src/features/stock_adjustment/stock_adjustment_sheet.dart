@@ -2,10 +2,12 @@ import 'package:core_models/core_models.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../data/pending_ops_service.dart';
 import '../../data/queries.dart';
 import '../../data/supabase_providers.dart';
 import '../../theme/app_colors.dart';
 import '../../ui/errors.dart';
+import '../../util/uuid.dart';
 
 /// Screen 07 · Ajuste de stock (bottom sheet). Registers a stock movement.
 /// Supabase is the source of truth; user-origin movements are pushed to ML by
@@ -34,6 +36,10 @@ class _StockAdjustmentSheetState extends ConsumerState<StockAdjustmentSheet> {
   String? _warehouseId; // null => server resolves to the default warehouse
   bool _busy = false;
   String? _error;
+
+  /// Id del movimiento definido en el cliente: reintentar el mismo confirm
+  /// (o subirlo después desde la cola offline) es no-op en el RPC.
+  final String _movementId = newUuid();
 
   static const _reasons = [
     (StockReason.purchase, 'Compra'),
@@ -68,6 +74,7 @@ class _StockAdjustmentSheetState extends ConsumerState<StockAdjustmentSheet> {
             reason: _reason,
             warehouseId: _warehouseId,
             origin: StockOrigin.user,
+            movementId: _movementId,
           );
       ref.invalidate(dashboardProvider);
       if (mounted) {
@@ -77,6 +84,26 @@ class _StockAdjustmentSheetState extends ConsumerState<StockAdjustmentSheet> {
         Navigator.of(context).pop();
       }
     } catch (e) {
+      if (AppErrors.isOffline(e)) {
+        // Sin red: queda en la cola local y sube sola al reconectar.
+        await ref.read(pendingOpsServiceProvider).enqueueAdjust(
+              movementId: _movementId,
+              productId: widget.product.id,
+              delta: _delta,
+              reason: _reason,
+              warehouseId: _warehouseId,
+              summary: 'Movimiento · ${widget.product.title} · '
+                  '${_delta > 0 ? '+' : ''}$_delta u.',
+            );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content:
+                Text('Sin conexión: el movimiento quedó pendiente de subir.'),
+          ));
+          Navigator.of(context).pop();
+        }
+        return;
+      }
       setState(() {
         _busy = false;
         _error = 'No se pudo registrar. ${AppErrors.friendly(e)}';

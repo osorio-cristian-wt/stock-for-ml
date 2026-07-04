@@ -2,10 +2,12 @@ import 'package:core_models/core_models.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../data/pending_ops_service.dart';
 import '../../data/queries.dart';
 import '../../data/supabase_providers.dart';
 import '../../theme/app_colors.dart';
 import '../../ui/errors.dart';
+import '../../util/uuid.dart';
 
 /// Transfer stock between two warehouses (internal control). Writes two paired
 /// on_hand movements via the `transfer_stock` RPC.
@@ -41,10 +43,23 @@ class _TransferSheetState extends ConsumerState<TransferSheet> {
   bool _busy = false;
   String? _error;
 
+  /// Reference definido en el cliente: reintentar el mismo confirm (o subirlo
+  /// después desde la cola offline) es no-op en el RPC.
+  final String _reference = newUuid();
+
   @override
   void initState() {
     super.initState();
     _fromId = widget.fromWarehouseId;
+  }
+
+  String _warehouseName(String id) {
+    final warehouses =
+        ref.read(warehousesStreamProvider).valueOrNull ?? const <Warehouse>[];
+    for (final w in warehouses) {
+      if (w.id == id) return w.name;
+    }
+    return 'Depósito';
   }
 
   Future<void> _confirm() async {
@@ -66,6 +81,7 @@ class _TransferSheetState extends ConsumerState<TransferSheet> {
             fromWarehouseId: _fromId!,
             toWarehouseId: _toId!,
             qty: _qty,
+            reference: _reference,
           );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -74,6 +90,26 @@ class _TransferSheetState extends ConsumerState<TransferSheet> {
         Navigator.of(context).pop();
       }
     } catch (e) {
+      if (AppErrors.isOffline(e)) {
+        // Sin red: queda en la cola local y sube sola al reconectar.
+        await ref.read(pendingOpsServiceProvider).enqueueTransfer(
+              reference: _reference,
+              productId: widget.product.id,
+              fromWarehouseId: _fromId!,
+              toWarehouseId: _toId!,
+              qty: _qty,
+              summary: 'Transferencia · ${widget.product.title} ×$_qty · '
+                  '${_warehouseName(_fromId!)} → ${_warehouseName(_toId!)}',
+            );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text(
+                'Sin conexión: la transferencia quedó pendiente de subir.'),
+          ));
+          Navigator.of(context).pop();
+        }
+        return;
+      }
       setState(() {
         _busy = false;
         _error = 'No se pudo transferir. ${AppErrors.friendly(e)}';

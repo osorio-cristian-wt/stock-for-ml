@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../../data/pending_ops_service.dart';
 import '../../data/queries.dart';
 import '../../data/supabase_providers.dart';
 import '../../theme/app_colors.dart';
@@ -236,6 +237,23 @@ class _PurchaseEditScreenState extends ConsumerState<PurchaseEditScreen> {
         Navigator.of(context).pop();
       }
     } catch (e) {
+      if (AppErrors.isOffline(e)) {
+        // Sin red: el cierre queda en la cola local (close_purchase ya es
+        // idempotente por estado) y sube solo al reconectar. El borrador deja
+        // de mostrarse como editable mientras espera.
+        await ref.read(pendingOpsServiceProvider).enqueuePurchaseClose(
+              purchaseId: p.id,
+              summary: 'Cierre de compra · ${items.length} '
+                  'producto${items.length == 1 ? '' : 's'}',
+            );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Sin conexión: el cierre quedó pendiente de subir.'),
+          ));
+          Navigator.of(context).pop();
+        }
+        return;
+      }
       setState(() => _busy = false);
       if (mounted) {
         // El detalle importa: la compra NO impactó el stock si esto falló.

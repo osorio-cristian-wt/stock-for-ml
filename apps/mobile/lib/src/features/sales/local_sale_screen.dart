@@ -2,6 +2,7 @@ import 'package:core_models/core_models.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../data/pending_ops_service.dart';
 import '../../data/queries.dart';
 import '../../data/sales_repository.dart';
 import '../../data/supabase_providers.dart';
@@ -231,17 +232,18 @@ class _LocalSaleScreenState extends ConsumerState<LocalSaleScreen> {
   Future<void> _confirm() async {
     if (_lines.isEmpty) return;
     setState(() => _busy = true);
+    final items = [
+      for (final l in _lines)
+        (
+          productId: l.product.id,
+          quantity: l.qty,
+          unitPrice: l.price,
+          warehouseId: l.warehouseId,
+        ),
+    ];
     try {
       await ref.read(salesRepositoryProvider).createLocalSale(
-            items: [
-              for (final l in _lines)
-                (
-                  productId: l.product.id,
-                  quantity: l.qty,
-                  unitPrice: l.price,
-                  warehouseId: l.warehouseId,
-                ),
-            ],
+            items: items,
             customerId: _customerId,
             warehouseId: _warehouseId,
             saleId: _saleId,
@@ -255,6 +257,28 @@ class _LocalSaleScreenState extends ConsumerState<LocalSaleScreen> {
         Navigator.of(context).pop();
       }
     } catch (e) {
+      if (AppErrors.isOffline(e)) {
+        // Sin red: la venta se encola local con el MISMO _saleId idempotente
+        // y el worker la sube al reconectar. Si en realidad SÍ entró y solo
+        // se cortó la respuesta, esa subida es no-op.
+        final total = _lines.fold<double>(0, (a, l) => a + l.total);
+        await ref.read(pendingOpsServiceProvider).enqueueSale(
+              saleId: _saleId,
+              items: items,
+              customerId: _customerId,
+              warehouseId: _warehouseId,
+              summary: 'Venta · ${_lines.length} '
+                  'producto${_lines.length == 1 ? '' : 's'} · ${Fmt.ars(total)}',
+            );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Sin conexión: la venta quedó pendiente de subir. '
+                'La ves en Movimientos.'),
+          ));
+          Navigator.of(context).pop();
+        }
+        return;
+      }
       setState(() => _busy = false);
       if (mounted) {
         // ej. "stock insuficiente en el depósito…" — nada quedó a medias.
