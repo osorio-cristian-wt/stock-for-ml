@@ -4,6 +4,7 @@ import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'data/pending_ops_service.dart';
 import 'data/queries.dart';
 import 'data/supabase_providers.dart';
 import 'features/auth/app_lock.dart';
@@ -39,6 +40,9 @@ class _StockForMlAppState extends ConsumerState<StockForMlApp> {
     _appLinks.getInitialLink().then((uri) {
       if (uri != null) _handleLink(uri);
     });
+    // Cola offline: drena pendientes al abrir, al recuperar red y al volver
+    // del segundo plano (docs/analisis-cola-offline.md, B1).
+    ref.read(pendingOpsServiceProvider).start();
   }
 
   @override
