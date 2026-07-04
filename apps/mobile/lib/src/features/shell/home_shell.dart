@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../data/pending_ops_service.dart';
 import '../../data/queries.dart';
 import '../../theme/app_colors.dart';
 import '../alerts/alerts_screen.dart';
@@ -33,6 +34,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
   @override
   Widget build(BuildContext context) {
     final unread = ref.watch(unreadAlertsCountProvider);
+    final pendingOps = ref.watch(pendingOpsCountProvider);
 
     final tabs = [
       HomeScreen(onSeeAllLowStock: () => _goToTab(1), onOpenAlerts: _openAlerts),
@@ -46,6 +48,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
       bottomNavigationBar: _BottomNav(
         index: _index,
         unreadAlerts: unread,
+        pendingOps: pendingOps,
         onTap: _goToTab,
       ),
     );
@@ -57,11 +60,15 @@ class _BottomNav extends StatelessWidget {
     required this.index,
     required this.onTap,
     required this.unreadAlerts,
+    required this.pendingOps,
   });
 
   final int index;
   final ValueChanged<int> onTap;
   final int unreadAlerts;
+
+  /// Operaciones esperando en la cola offline → badge en Movimientos.
+  final int pendingOps;
 
   @override
   Widget build(BuildContext context) {
@@ -92,6 +99,7 @@ class _BottomNav extends StatelessWidget {
                 icon: Icons.swap_horiz_rounded,
                 label: 'Movimientos',
                 selected: index == 2,
+                badge: pendingOps,
                 onTap: () => onTap(2),
               ),
               _NavItem(
@@ -114,12 +122,16 @@ class _NavItem extends StatelessWidget {
     required this.label,
     required this.selected,
     required this.onTap,
+    this.badge = 0,
   });
 
   final IconData icon;
   final String label;
   final bool selected;
   final VoidCallback onTap;
+
+  /// > 0 → globito con el número sobre el ícono (ej. pendientes de subir).
+  final int badge;
 
   @override
   Widget build(BuildContext context) {
@@ -130,7 +142,13 @@ class _NavItem extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon, color: color, size: 22),
+            Badge(
+              isLabelVisible: badge > 0,
+              label: Text('$badge'),
+              backgroundColor: AppColors.warning,
+              textColor: AppColors.bg,
+              child: Icon(icon, color: color, size: 22),
+            ),
             const SizedBox(height: 4),
             Text(
               label,

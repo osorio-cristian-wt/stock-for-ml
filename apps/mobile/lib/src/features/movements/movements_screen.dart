@@ -3,6 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/economics_repository.dart';
+import '../../data/local/app_db.dart';
+import '../../data/pending_ops_repository.dart';
+import '../../data/pending_ops_service.dart';
 import '../../data/queries.dart';
 import '../../data/supabase_providers.dart';
 import '../../theme/app_colors.dart';
@@ -11,6 +14,7 @@ import '../../ui/format.dart';
 import '../../ui/widgets/app_widgets.dart';
 import '../purchases/purchase_edit_screen.dart';
 import '../sales/local_sale_screen.dart';
+import 'pending_ops_section.dart';
 import 'transfer_screen.dart';
 
 /// Tab Movimientos · feed unificado de ventas + compras + transferencias,
@@ -92,10 +96,18 @@ class _MovementsScreenState extends ConsumerState<MovementsScreen> {
     final purchasesAsync = ref.watch(purchasesStreamProvider);
     final transfersAsync = ref.watch(transfersStreamProvider);
     final feed = ref.watch(movementsFeedProvider);
-    // Los borradores viven en su propia sección arriba del feed.
+    // Los borradores viven en su propia sección arriba del feed. Una compra
+    // cuyo cierre está encolado offline ya no es editable como borrador: se
+    // muestra solo en "Pendientes de subir".
+    final pendingOps =
+        ref.watch(pendingOpsProvider).valueOrNull ?? const <PendingOp>[];
+    final pendingCloseIds = {
+      for (final op in pendingOps)
+        if (op.kind == PendingOpKind.purchaseClose) op.id,
+    };
     final drafts = [
       for (final p in purchasesAsync.valueOrNull ?? const <Purchase>[])
-        if (p.isDraft) p,
+        if (p.isDraft && !pendingCloseIds.contains(p.id)) p,
     ];
     final entries = feed
         .where(_matches)
@@ -336,6 +348,9 @@ class _FeedList extends StatelessWidget {
           InlineError(message: salesError!, onRetry: onRetrySales),
           const SizedBox(height: 18),
         ],
+        // Operaciones confirmadas sin red, esperando sincronizarse (se oculta
+        // sola si la cola está vacía).
+        const PendingOpsSection(),
         if (showDrafts) ...[
           SectionHeader('Borradores',
               uppercase: true, actionLabel: 'Limpiar', onAction: onClearDrafts),
