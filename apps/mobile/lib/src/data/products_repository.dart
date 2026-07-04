@@ -52,6 +52,8 @@ class ProductsRepository {
   /// Registers a stock movement via the SECURITY INVOKER RPC; the DB trigger
   /// updates product_stock buckets, recomputes current_stock (available) and —
   /// for user/system origin — enqueues an ML push.
+  /// Idempotente: pasá el mismo [movementId] al reintentar (cola offline) y el
+  /// RPC devuelve el movimiento existente sin re-aplicar el delta.
   Future<void> applyStockMovement({
     required String productId,
     required int delta,
@@ -61,6 +63,7 @@ class ProductsRepository {
     String? warehouseId,
     StockBucket bucket = StockBucket.onHand,
     StockOrigin origin = StockOrigin.user,
+    String? movementId,
   }) async {
     await _client.rpc('apply_stock_movement', params: {
       'p_product_id': productId,
@@ -71,6 +74,7 @@ class ProductsRepository {
       'p_warehouse_id': warehouseId,
       'p_bucket': bucket.wire,
       'p_origin': origin.wire,
+      'p_movement_id': movementId,
     });
   }
 

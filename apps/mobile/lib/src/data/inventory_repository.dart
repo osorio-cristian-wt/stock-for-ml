@@ -53,12 +53,15 @@ class InventoryRepository {
   }
 
   /// Moves [qty] units of a product between two warehouses (internal control).
+  /// Idempotente: pasá el mismo [reference] al reintentar (cola offline) y el
+  /// RPC no duplica la transferencia.
   Future<void> transferStock({
     required String productId,
     required String fromWarehouseId,
     required String toWarehouseId,
     required int qty,
     String? note,
+    String? reference,
   }) async {
     await _client.rpc('transfer_stock', params: {
       'p_product_id': productId,
@@ -66,6 +69,7 @@ class InventoryRepository {
       'p_to_warehouse': toWarehouseId,
       'p_qty': qty,
       'p_note': note,
+      'p_reference': reference,
     });
   }
 

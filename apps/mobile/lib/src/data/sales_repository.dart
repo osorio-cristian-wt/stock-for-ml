@@ -1,7 +1,7 @@
-import 'dart:math';
-
 import 'package:core_models/core_models.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
+import '../util/uuid.dart';
 
 /// One line of the local-sale cart (client side, before the RPC writes it).
 /// [warehouseId] permite que cada línea descuente de un depósito distinto;
@@ -13,17 +13,9 @@ typedef LocalSaleLine = ({
   String? warehouseId,
 });
 
-/// UUID v4 aleatorio (sin dependencia extra): identifica la venta ANTES de
-/// mandarla, para que un reintento tras un corte de red sea no-op en el RPC.
-String newSaleId() {
-  final rnd = Random.secure();
-  final b = List<int>.generate(16, (_) => rnd.nextInt(256));
-  b[6] = (b[6] & 0x0f) | 0x40; // versión 4
-  b[8] = (b[8] & 0x3f) | 0x80; // variante RFC 4122
-  final h = b.map((x) => x.toRadixString(16).padLeft(2, '0')).join();
-  return '${h.substring(0, 8)}-${h.substring(8, 12)}-${h.substring(12, 16)}-'
-      '${h.substring(16, 20)}-${h.substring(20)}';
-}
+/// UUID v4 que identifica la venta ANTES de mandarla, para que un reintento
+/// tras un corte de red sea no-op en el RPC.
+String newSaleId() => newUuid();
 
 /// Sales: orders imported from ML plus local (direct) sales. RLS scopes rows
 /// to the user.
