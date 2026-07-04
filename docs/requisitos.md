@@ -109,6 +109,13 @@
   nada falla en silencio. *(2026-07-03)*
 - **RF-34** **Bloqueo biométrico** opcional (Face ID / huella) al volver a la
   app tras inactividad. *(2026-07-03)*
+- **RF-35** **Operación sin conexión**: si una venta / transferencia / ajuste /
+  cierre de compra se confirma sin red, queda en una **cola local persistente**
+  (`pending_ops`, drift) con su id idempotente y se sube sola al reconectar
+  (worker con connectivity_plus). Sección "Pendientes de subir" en Movimientos
+  con reintento/descarte y detalle del rechazo diferido (ej. stock
+  insuficiente al sincronizar). *(2026-07-03, etapa B1 de
+  [analisis-cola-offline.md](analisis-cola-offline.md))*
 
 ### Notificaciones
 - **RF-21** Recibir webhooks de ML (`orders_v2`, `items`, `items_prices`,
@@ -158,12 +165,12 @@
 
 | Requisito | Estado |
 |-----------|--------|
-| RF-01…RF-06, RF-08…RF-18, RF-20, RF-21, RF-23…RF-34 | ✅ Implementado (tests en verde: pgTAP 131, Deno 12, core_models 24, widget 1) |
+| RF-01…RF-06, RF-08…RF-18, RF-20, RF-21, RF-23…RF-35 | ✅ Implementado (tests en verde: pgTAP 148, Deno 12, core_models 24, Flutter 4) |
 | RF-07 variaciones | 🟡 Parcial: espejo `listing_variations` + UI en detalle; push por variación no soportado (se omite con nota en la cola) |
 | RF-19 comparativa entre productos | ✅ Pantalla "Comparativa" (margen/markup/ganancia/rotación 30d) desde Productos |
 | RF-22 push FCM | ⏸ Bloqueado por credenciales Firebase/APNs del dueño ([firebase.md](firebase.md)) |
 | RNF-01…04, RNF-06, RNF-08 | ✅ (RLS, colas idempotentes, rate-friendly, tests, entornos 743x + [setup.md](setup.md)) |
-| RNF-05 offline | 🟡 Realtime OK; ventas idempotentes al reintentar; cola local persistente analizada en [analisis-cola-offline.md](analisis-cola-offline.md) |
+| RNF-05 offline | ✅ Cola local persistente `pending_ops` (RF-35): confirmar sin red encola y sube solo al reconectar ([analisis-cola-offline.md](analisis-cola-offline.md)); las LECTURAS siguen requiriendo conexión |
 | RNF-07 observabilidad | 🟡 `stock_push_queue` ahora visible en la app (banner + reintento); `ml_events.error` sigue solo en base |
 
 Fuera de requisitos pero decidido con el dueño: crear borrador en ML

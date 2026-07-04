@@ -625,3 +625,52 @@ scopes OAuth de escritura.
   cancelación, costeo fifo/avg/last/manual, v_sale_profit, alertas v2);
   test 00 ajustado a la nueva semántica de alertas. Suites: pgTAP 131,
   Flutter 1, core_models 24, Deno 12 — todo verde; `flutter analyze` limpio.
+
+**Addendum 2026-07-03 (5): cola offline `pending_ops` (RF-35, etapa B1 del
+análisis).**
+- **Migración `20260703200000_offline_idempotency.sql`** (+ pgTAP
+  `05_offline_idempotency_test.sql`, 17 asserts): `transfer_stock` v2 con
+  `p_reference` del cliente (si ya existen movimientos con ese reference →
+  no-op) y `apply_stock_movement` v3 con `p_movement_id` (reintento devuelve
+  el movimiento existente sin re-aplicar). Con esto los 4 kinds encolables
+  son idempotentes (venta ya lo era por `p_sale_id`; cierre de compra por
+  estado).
+- **Deps nuevas:** `drift` 2.20 + `drift_flutter` + `connectivity_plus` 6.1
+  (runtime); `drift_dev` + `build_runner` (dev; el `.g.dart` se commitea).
+  OJO: drift quedó en 2.20 porque drift_dev ≥ 2.21 exige analyzer ≥ 8 y el
+  `test ^1.25` de core_models (pineado por flutter_test del SDK 3.8) lo
+  bloquea; y connectivity_plus quedó en 6.x porque 7.x arrastra androidx.core
+  1.18 (compileSdk 36 + AGP ≥ 8.9; el proyecto usa 35/8.7.3). Ambos suben
+  cuando se actualice el SDK de Flutter / proyecto Android.
+- **Cola local:** `data/local/app_db.dart` (tabla `PendingOps`: id = uuid
+  idempotente que viaja al RPC, kind sale|purchase_close|transfer|adjust,
+  payload JSON, summary legible armado al encolar, attempts, last_error,
+  status pending|error) + `data/pending_ops_repository.dart` (enqueue
+  insertOrIgnore, watchAll/pendingOrdered FIFO con desempate por rowid,
+  markError, resetToPending). `newSaleId()` se generalizó a
+  `util/uuid.dart#newUuid()`.
+- **Worker `data/pending_ops_service.dart`:** `start()` desde `app.dart`;
+  drena FIFO al abrir la app, al recuperar red (onConnectivityChanged), al
+  volver del segundo plano (WidgetsBindingObserver) y en el reintento manual;
+  guard de reentrada + no drena sin sesión. Fallo offline corta el drenado;
+  rechazo del server → `error` + last_error y sigue. Éxito borra la fila e
+  invalida sales/dashboard. API tipada `enqueueSale/Transfer/Adjust/
+  PurchaseClose`; providers `pendingOpsProvider` (stream drift) y
+  `pendingOpsCountProvider`.
+- **Encolado en la UI** (patrón único: catch → `AppErrors.isOffline(e)` →
+  encolar + snackbar "quedó pendiente de subir" + pop; errores de negocio
+  online se muestran al instante como antes): `local_sale_screen` (mismo
+  `_saleId`), `transfer_sheet` y `stock_adjustment_sheet` (id/reference
+  generado una vez por sheet), `transfer_screen` (una op POR LÍNEA — la línea
+  cortada conserva su reference por si el RPC entró — y el `_SummarySheet`
+  distingue movidas/pendientes), `purchase_edit_screen._close` (el borrador
+  con cierre encolado desaparece de "Borradores").
+- **Sección "Pendientes de subir"** en Movimientos
+  (`features/movements/pending_ops_section.dart`, arriba de Borradores,
+  misma estética): fila con estado (Pendiente ámbar / Rechazada roja), tap →
+  dialog con detalle del rechazo (friendly + técnico, patrón `ui/errors.dart`)
+  y acciones Subir ahora / Reintentar / Descartar (con confirmación). Badge
+  numérico ámbar en el ícono del tab Movimientos (`home_shell.dart`).
+- **Tests:** pgTAP 148 (6 archivos), Flutter 4 (widget +
+  `pending_ops_repository_test.dart` con drift en memoria), core_models 24,
+  Deno 12 — todo verde; `flutter analyze` limpio.

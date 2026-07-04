@@ -1,6 +1,7 @@
 # Análisis: cola de subida idempotente para operar sin conexión
 
-**Fecha:** 2026-07-03 · **Estado:** análisis (pedido del dueño; sin implementación aún)
+**Fecha:** 2026-07-03 · **Estado:** ✅ implementado (B0 y B1; ver "Estado de
+implementación" al final)
 
 ## El problema
 
@@ -71,3 +72,22 @@ Base local espejo (PowerSync / Brick / ElectricSQL) con sync bidireccional.
    sección "Pendientes de subir" en Movimientos.
 
 C queda descartada salvo que aparezcan múltiples puntos de venta simultáneos.
+
+## Estado de implementación (2026-07-03, B1 hecha)
+
+- **Backend** (`20260703200000_offline_idempotency.sql`, pgTAP 05):
+  `transfer_stock` v2 acepta `p_reference` del cliente (reintento = no-op);
+  `apply_stock_movement` v3 acepta `p_movement_id` (ídem). Venta
+  (`p_sale_id`) y cierre de compra (por estado) ya eran idempotentes.
+- **Cola local**: tabla `pending_ops` con `drift`
+  (`data/local/app_db.dart` + `data/pending_ops_repository.dart`); el id del
+  op ES el id idempotente que viaja al RPC.
+- **Worker** (`data/pending_ops_service.dart`): drena FIFO al abrir la app,
+  al recuperar red (`connectivity_plus`), al volver del segundo plano y en el
+  reintento manual. Fallo de conectividad corta el drenado (queda `pending`);
+  rechazo del server marca `error` + `last_error` y sigue con la próxima.
+- **UI**: al confirmar sin red, venta / transferencia (sheet y pantalla
+  multi-producto) / ajuste / cierre de compra se encolan con aviso; sección
+  **"Pendientes de subir"** en Movimientos (reintentar / descartar, detalle
+  del rechazo con el manejo de errores centralizado) + badge en el tab.
+- RF-35 en `requisitos.md`; addendum (5) en `plan-implementacion-vistas.md`.
