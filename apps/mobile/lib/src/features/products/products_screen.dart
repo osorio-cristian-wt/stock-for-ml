@@ -12,7 +12,19 @@ import 'product_detail_screen.dart';
 import 'product_form_screen.dart';
 import 'product_tile.dart';
 
-enum _Filter { all, published, internal, attention }
+enum _Filter { all, published, internal, attention, paused, noStock, lowStock, noCost }
+
+/// Ordenamientos de la lista (además del orden natural del stream).
+enum _Sort {
+  none('Predeterminado'),
+  name('Nombre A–Z'),
+  stockAsc('Menos stock primero'),
+  stockDesc('Más stock primero'),
+  marginDesc('Mejor margen primero');
+
+  const _Sort(this.label);
+  final String label;
+}
 
 /// RF-40.4: el producto necesita acción del usuario — publicado sin costo
 /// (no se puede calcular ganancia), sin precio local (no se puede vender
@@ -42,6 +54,7 @@ class ProductsScreen extends ConsumerStatefulWidget {
 class _ProductsScreenState extends ConsumerState<ProductsScreen> {
   final _search = TextEditingController();
   _Filter _filter = _Filter.all;
+  _Sort _sort = _Sort.none;
   String _query = '';
   String? _categoryFilter; // category id; null = all categories
 
@@ -99,12 +112,61 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
               padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
               child: Row(
                 children: [
-                  const Expanded(
-                    child: Text('Productos',
-                        style: TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.textPrimary)),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('Productos',
+                            style: TextStyle(
+                                fontSize: 22,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.textPrimary)),
+                        // "68 productos · 186 publicaciones": varias
+                        // publicaciones pueden apuntar al mismo producto
+                        // (relistings deduplicados por GTIN/SKU).
+                        Builder(builder: (context) {
+                          final products = ref
+                                  .watch(productsStreamProvider)
+                                  .valueOrNull
+                                  ?.length ??
+                              0;
+                          final listings =
+                              ref.watch(listingCountProvider).valueOrNull ?? 0;
+                          if (products == 0 || listings == 0) {
+                            return const SizedBox.shrink();
+                          }
+                          return Text(
+                            '$products producto${products == 1 ? '' : 's'} · '
+                            '$listings publicación${listings == 1 ? '' : 'es'} ML',
+                            style: const TextStyle(
+                                fontSize: 12, color: AppColors.textMuted),
+                          );
+                        }),
+                      ],
+                    ),
+                  ),
+                  PopupMenuButton<_Sort>(
+                    tooltip: 'Ordenar',
+                    color: AppColors.surface,
+                    initialValue: _sort,
+                    onSelected: (s) => setState(() => _sort = s),
+                    itemBuilder: (_) => [
+                      for (final s in _Sort.values)
+                        PopupMenuItem(
+                          value: s,
+                          child: Text(s.label,
+                              style: TextStyle(
+                                  fontSize: 13,
+                                  color: s == _sort
+                                      ? AppColors.primary
+                                      : AppColors.textPrimary)),
+                        ),
+                    ],
+                    icon: Icon(Icons.sort_rounded,
+                        color: _sort == _Sort.none
+                            ? AppColors.textSecondary
+                            : AppColors.primary,
+                        size: 22),
                   ),
                   IconButton(
                     onPressed: () => Navigator.of(context).push(
@@ -279,7 +341,8 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
     List<Product> products,
     Map<String, ProductEconomics> economics,
   ) {
-    return products.where((p) {
+    final filtered = products.where((p) {
+      final e = economics[p.id];
       final published = economics.containsKey(p.id);
       switch (_filter) {
         case _Filter.published:
@@ -287,7 +350,18 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
         case _Filter.internal:
           if (published) return false;
         case _Filter.attention:
-          if (!_needsAttention(p, economics[p.id])) return false;
+          if (!_needsAttention(p, e)) return false;
+        case _Filter.paused:
+          if (e?.listingStatus != ListingStatus.paused) return false;
+        case _Filter.noStock:
+          if (p.currentStock > 0) return false;
+        case _Filter.lowStock:
+          if (!p.isLowStock || p.currentStock <= 0) return false;
+        case _Filter.noCost:
+          // Publicado: costo según la política de costeo (hasCost, RF-40);
+          // interno: el costo manual del producto.
+          final noCost = e != null ? !e.hasCost : p.purchaseCost <= 0;
+          if (!noCost) return false;
         case _Filter.all:
           break;
       }
@@ -299,6 +373,29 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
           (p.sku?.toLowerCase().contains(_query) ?? false) ||
           (p.brand?.toLowerCase().contains(_query) ?? false);
     }).toList();
+
+    switch (_sort) {
+      case _Sort.none:
+        break;
+      case _Sort.name:
+        filtered.sort((a, b) =>
+            a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+      case _Sort.stockAsc:
+        filtered.sort((a, b) => a.currentStock.compareTo(b.currentStock));
+      case _Sort.stockDesc:
+        filtered.sort((a, b) => b.currentStock.compareTo(a.currentStock));
+      case _Sort.marginDesc:
+        // Sin margen (interno o sin costo) al final.
+        filtered.sort((a, b) {
+          final ma = economics[a.id]?.marginPct;
+          final mb = economics[b.id]?.marginPct;
+          if (ma == null && mb == null) return 0;
+          if (ma == null) return 1;
+          if (mb == null) return -1;
+          return mb.compareTo(ma);
+        });
+    }
+    return filtered;
   }
 }
 
@@ -348,6 +445,30 @@ class _FilterRow extends StatelessWidget {
               onTap: () => onChanged(_Filter.attention),
             ),
           ],
+          const SizedBox(width: 7),
+          _Chip(
+            label: 'Pausadas',
+            selected: filter == _Filter.paused,
+            onTap: () => onChanged(_Filter.paused),
+          ),
+          const SizedBox(width: 7),
+          _Chip(
+            label: 'Sin stock',
+            selected: filter == _Filter.noStock,
+            onTap: () => onChanged(_Filter.noStock),
+          ),
+          const SizedBox(width: 7),
+          _Chip(
+            label: 'Stock bajo',
+            selected: filter == _Filter.lowStock,
+            onTap: () => onChanged(_Filter.lowStock),
+          ),
+          const SizedBox(width: 7),
+          _Chip(
+            label: 'Sin costo',
+            selected: filter == _Filter.noCost,
+            onTap: () => onChanged(_Filter.noCost),
+          ),
         ],
       ),
     );
