@@ -674,3 +674,55 @@ análisis).**
 - **Tests:** pgTAP 148 (6 archivos), Flutter 4 (widget +
   `pending_ops_repository_test.dart` con drift en memoria), core_models 24,
   Deno 12 — todo verde; `flutter analyze` limpio.
+
+
+**Addendum 2026-07-09: feedback del dueño (2ª tanda julio) — RF-48…RF-50 + fixes.**
+Disparado por el feedback probando la app (envíos invisibles, stock −9,
+push que no subía, 186 publicaciones vs 68 productos). Todo aplicado:
+- **Fix cutoff pre-import (`_shared/orders.ts`):** el import siembra stock con
+  el available ACTUAL de ML, que ya descuenta las ventas históricas;
+  `sync-orders` (últimas 50) las reconciliaba igual → doble descuento y
+  negativos. Ahora `preTracking(order.date_created, listing.created_at)`
+  (helper puro + 5 tests Deno) pincha el efecto de stock a CERO para órdenes
+  anteriores al espejado de su publicación, PERO las deja entrar al RPC:
+  `reconcile_order_stock` compensa hacia el estado deseado, así que reprocesar
+  las órdenes REPARA solo lo mal descontado. La venta se registra igual
+  (histórico/stats/cargos).
+- **Fix push a pausadas (`push-stock`):** solo pusheaba a `status=active`;
+  una publicación pausada por `out_of_stock` jamás recibía el PUT y quedaba
+  pausada para siempre (RF-47 asumía lo contrario). Ahora active+paused
+  (closed/under_review siguen afuera). Combinado con el negativo → círculo
+  vicioso: stock −9 pusheaba max(0)=0 → ML pausaba → nunca más se activaba.
+- **RF-48 estado de publicación:** `reactivate-listing` acepta
+  `status: active|paused` (guard + mismo refresh del espejo);
+  `ConnectionRepository.setListingStatus`. Tarjeta **"Publicaciones (N)"** en
+  el detalle (`_ListingsCard`): TODAS las publicaciones del producto en vivo
+  (`productListingsProvider`), chip de estado (`ListingStatusChip` refactor
+  `.fromEconomics`/`.fromListing`), Full tag, precio/stock ML, pausar (con
+  confirmación) / activar (solo `paused` no-out_of_stock: esas se reactivan
+  con stock) / abrir permalink. Responde el "¿186 publicaciones pero 68
+  productos?": la dedup GTIN/SKU colapsa relistings — ahora se VEN, y el
+  header de Productos muestra "N productos · M publicaciones ML"
+  (`listingCountProvider`).
+- **RF-49 recalibrar stock:** migración `20260709120000_recalibrate_stock.sql`
+  — `recalibrate_stock_for(uuid)` (revocada a clientes) + wrapper
+  `recalibrate_stock()` scoped a auth.uid(). Publicados → max(available) de
+  sus publicaciones no-Full activas/pausadas; internos → 0. UN movimiento
+  al depósito principal, `origin='ml'` (NO pushea), no toca depósitos no
+  vendibles ni el espejo Full. Botón en Ajustes → zona peligrosa con
+  confirmación; snackbar con el nº de productos ajustados. pgTAP 07 (13
+  asserts, incluye la compensación a cero de `reconcile_order_stock`).
+- **RF-50 filtros/orden en Productos:** chips nuevos Pausadas / Sin stock /
+  Stock bajo / Sin costo (single-select con los existentes) + menú de orden
+  (`_Sort`: nombre, stock ↑↓, margen desc con nulls al final).
+- **UI ventas:** el detalle ahora desglosa **Envío** (`shipping_cost`) y
+  **Otros cargos (impuestos)** (`SaleProfit.chargesArs − comisión − envío`)
+  además de la comisión (el neto ya los descontaba invisible); cada línea con
+  `product_id` navega al detalle del producto (`_Line.productId`).
+- **OJO deploy:** los cargos de envío (RF-39) y el cutoff viven en
+  `_shared/orders.ts` ⇒ hay que redeployar **`process-events` y
+  `sync-orders`** (no estaban en la lista del lote anterior). Tras el deploy,
+  invocar `sync-orders` una vez repara los negativos de las últimas 50
+  órdenes; para drift más viejo está Recalibrar stock.
+- **Suites:** pgTAP 187 (8 archivos), Deno 23, core_models 25, Flutter 4,
+  `flutter analyze` limpio, `deno check` de las funciones tocadas OK.

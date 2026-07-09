@@ -155,6 +155,31 @@
   `paused_by_seller`, **prompt de reactivación** (push `status=active`);
   las `out_of_stock` se reactivan solas con el push de stock.
 
+### Feedback julio 2026 — 2ª tanda (aplicado 2026-07-09)
+- **RF-48** **Pausar/activar publicaciones desde la app** (extensión de
+  `reactivate-listing` con `status`) y tarjeta **"Publicaciones (N)"** en el
+  detalle del producto: TODAS las publicaciones vinculadas (relistings que la
+  dedup por GTIN/SKU colapsó) con estado, precio, stock ML, acciones y
+  permalink. Contador "N productos · M publicaciones" en Productos.
+- **RF-49** **Recalibrar stock** (Ajustes → zona peligrosa): el stock vendible
+  de cada producto se reescribe — publicados = available de su publicación ML
+  (max entre no-Full activas/pausadas), internos = 0 para recontar. No pushea
+  a ML ni toca depósitos no vendibles / espejo Full. RPC `recalibrate_stock`.
+- **RF-50** **Filtros y orden en Productos**: chips Pausadas / Sin stock /
+  Stock bajo / Sin costo (además de Todos/Publicados/Internos/Atención y
+  categorías) y menú de orden (nombre, stock ↑↓, margen).
+- **Fix cutoff pre-import** *(bug de dominio, no RF)*: las órdenes ML
+  anteriores al espejado de su publicación **no tocan stock** (el snapshot
+  importado ya las tenía descontadas → doble descuento, stock −9). Se
+  registran igual como ventas; `reconcile_order_stock` con target 0 además
+  **repara** lo ya mal descontado al reprocesar (`sync-orders`).
+- **Fix push a pausadas** *(bug, no RF)*: `push-stock` ahora también hace PUT
+  a publicaciones `paused` — antes una pausada por `out_of_stock` nunca
+  recibía stock y quedaba pausada para siempre (contradecía RF-47).
+- **UI ventas**: fila **Envío** y **Otros cargos (impuestos)** en el detalle
+  de la venta (antes solo comisión, aunque el neto ya los descontaba) y
+  **tap en cada línea → detalle del producto**.
+
 ### Notificaciones
 - **RF-21** Recibir webhooks de ML (`orders_v2`, `items`, `items_prices`,
   `item_competition`) y procesarlos de forma asíncrona y confiable.
@@ -208,6 +233,7 @@
 | RF-19 comparativa entre productos | ✅ Pantalla "Comparativa" (margen/markup/ganancia/rotación 30d) desde Productos |
 | RF-22 push FCM | ⏸ Bloqueado por credenciales Firebase/APNs del dueño ([firebase.md](firebase.md)) |
 | RF-36…RF-47 (mejoras julio 2026) | ✅ Implementado 2026-07-09 (suites verdes: pgTAP 174, Deno 18, core_models 25, Flutter 4, analyze limpio); pendiente de **deploy**: migraciones 20260708*, funciones `sync-items` (reescrita), `reactivate-listing` (nueva), `link-ml-listing` (fix imports), `push-stock`, `_shared/*` |
+| RF-48…RF-50 + fixes (feedback julio, 2ª tanda) | ✅ Implementado 2026-07-09 (suites: pgTAP 187, Deno 23, core_models 25, Flutter 4, analyze limpio); deploy: migración `20260709120000_recalibrate_stock.sql` + funciones `push-stock`, `reactivate-listing`, **`process-events` y `sync-orders`** (comparten `_shared/orders.ts`, donde viven RF-39 y el cutoff — sin redeployarlas los envíos no aparecen y el doble descuento sigue) |
 | RNF-01…04, RNF-06, RNF-08 | ✅ (RLS, colas idempotentes, rate-friendly, tests, entornos 743x + [setup.md](setup.md)) |
 | RNF-05 offline | ✅ Cola local persistente `pending_ops` (RF-35): confirmar sin red encola y sube solo al reconectar ([analisis-cola-offline.md](analisis-cola-offline.md)); las LECTURAS siguen requiriendo conexión |
 | RNF-07 observabilidad | ✅ Pantalla "Actividad ML" (RF-46): pushes, imports y movimientos origin=ml visibles; `ml_events.error` sigue solo en base (sin profile_id para RLS) |
