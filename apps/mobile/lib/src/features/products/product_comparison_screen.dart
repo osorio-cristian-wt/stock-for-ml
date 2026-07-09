@@ -216,7 +216,8 @@ class _ComparisonTile extends StatelessWidget {
                 const SizedBox(height: 2),
                 Text(
                   '${row.soldUnits30d} vend. 30d · stock ${row.currentStock}'
-                  '${row.published ? '' : ' · interno'}',
+                  '${row.published ? '' : ' · interno'}'
+                  '${row.published && !row.hasCost ? ' · sin costo' : ''}',
                   style:
                       const TextStyle(fontSize: 11, color: AppColors.textMuted),
                 ),
