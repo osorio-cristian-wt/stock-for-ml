@@ -5,7 +5,12 @@ workflows:
     instance_type: mac_mini_m2
 
     environment:
-      flutter: stable
+      # Fijado a la MISMA versión que .github/workflows/ci.yml: el "stable" de
+      # Codemagic avanzó a un Dart sin `_macros` en el SDK y la cadena
+      # drift_dev 2.20 → dart_style <3 → analyzer 6.x → macros no resuelve ahí
+      # (pub get falla en Bootstrap). Subir esto requiere subir drift/drift_dev
+      # y el resto del toolchain a la vez (gotcha en el pubspec de mobile).
+      flutter: 3.32.7
       # Apple ahora exige iOS SDK 26+ para publicar en App Store Connect.
       # Usamos la imagen estable más nueva en vez de fijar Xcode 16.4.
       xcode: latest
