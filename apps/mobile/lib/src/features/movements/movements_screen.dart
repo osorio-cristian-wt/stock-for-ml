@@ -12,6 +12,7 @@ import '../../theme/app_colors.dart';
 import '../../ui/errors.dart';
 import '../../ui/format.dart';
 import '../../ui/widgets/app_widgets.dart';
+import '../products/product_detail_screen.dart';
 import '../purchases/purchase_edit_screen.dart';
 import '../sales/local_sale_screen.dart';
 import 'pending_ops_section.dart';
@@ -830,6 +831,7 @@ class _SaleDetailSheet extends ConsumerWidget {
                     title: product?.title ?? sale.mlItemId ?? 'Producto',
                     qty: sale.quantity,
                     unitPrice: sale.unitPrice,
+                    productId: product?.id ?? sale.productId,
                   );
                 }
                 return Column(
@@ -840,6 +842,7 @@ class _SaleDetailSheet extends ConsumerWidget {
                         title: it.title ?? it.mlItemId ?? 'Producto',
                         qty: it.quantity,
                         unitPrice: it.unitPrice,
+                        productId: it.productId,
                       ),
                       const SizedBox(height: 8),
                     ],
@@ -867,19 +870,16 @@ class _SaleDetailSheet extends ConsumerWidget {
               ],
             ),
             if (sale.saleFee > 0)
-              Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text('Comisión ML',
-                        style:
-                            TextStyle(fontSize: 12, color: AppColors.textMuted)),
-                    Text('− ${Fmt.ars(sale.saleFee)}',
-                        style: const TextStyle(
-                            fontSize: 12, color: AppColors.danger)),
-                  ],
-                ),
+              _ChargeRow(label: 'Comisión ML', amount: sale.saleFee),
+            // RF-39: lo que el vendedor paga del envío (subsidio de envío
+            // gratis, Flex, etc.), espejado desde /shipments/{id}/costs.
+            if (sale.shippingCost > 0)
+              _ChargeRow(label: 'Envío', amount: sale.shippingCost),
+            if (profit != null &&
+                profit.chargesArs - sale.saleFee - sale.shippingCost > 0.005)
+              _ChargeRow(
+                label: 'Otros cargos (impuestos)',
+                amount: profit.chargesArs - sale.saleFee - sale.shippingCost,
               ),
             Padding(
               padding: const EdgeInsets.only(top: 4),
@@ -946,25 +946,58 @@ class _SaleDetailSheet extends ConsumerWidget {
   }
 }
 
+/// Fila de un cargo que descuenta del total (comisión, envío, impuestos).
+class _ChargeRow extends StatelessWidget {
+  const _ChargeRow({required this.label, required this.amount});
+
+  final String label;
+  final double amount;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label,
+              style: const TextStyle(fontSize: 12, color: AppColors.textMuted)),
+          Text('− ${Fmt.ars(amount)}',
+              style: const TextStyle(fontSize: 12, color: AppColors.danger)),
+        ],
+      ),
+    );
+  }
+}
+
 class _Line extends StatelessWidget {
-  const _Line({required this.title, required this.qty, required this.unitPrice});
+  const _Line({
+    required this.title,
+    required this.qty,
+    required this.unitPrice,
+    this.productId,
+  });
 
   final String title;
   final int qty;
   final double unitPrice;
 
+  /// Con producto interno vinculado la línea navega a su detalle.
+  final String? productId;
+
   @override
   Widget build(BuildContext context) {
-    return Row(
+    final linked = productId != null;
+    final row = Row(
       children: [
         Expanded(
           child: Text(title,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
+              style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w500,
-                  color: AppColors.textPrimary)),
+                  color: linked ? AppColors.primary : AppColors.textPrimary)),
         ),
         const SizedBox(width: 8),
         Text('$qty × ${Fmt.ars(unitPrice)}',
@@ -975,7 +1008,21 @@ class _Line extends StatelessWidget {
                 fontSize: 13,
                 fontWeight: FontWeight.w700,
                 color: AppColors.textPrimary)),
+        if (linked) ...[
+          const SizedBox(width: 2),
+          const Icon(Icons.chevron_right, size: 16, color: AppColors.textFaint),
+        ],
       ],
+    );
+    if (!linked) return row;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => ProductDetailScreen(productId: productId!),
+        ),
+      ),
+      child: row,
     );
   }
 }
