@@ -138,6 +138,15 @@ export class MeliClient {
     });
   }
 
+  /** Reactivate/pause a listing (RF-47: paused_by_seller needs an explicit
+   * status change; out_of_stock ones reactivate alone with a stock PUT). */
+  updateItemStatus(itemId: string, status: "active" | "paused"): Promise<MeliItem> {
+    return this.req(`/items/${itemId}`, {
+      method: "PUT",
+      body: JSON.stringify({ status }),
+    });
+  }
+
   getOrder(orderId: string): Promise<MeliOrder> {
     return this.req(`/orders/${orderId}`);
   }
@@ -148,6 +157,12 @@ export class MeliClient {
 
   getShipment(shipmentId: string): Promise<MeliShipment> {
     return this.req(`/shipments/${shipmentId}`);
+  }
+
+  /** Seller-side shipping costs of a shipment (senders[].cost = what the
+   * seller pays, e.g. free-shipping subsidy). RF-39. */
+  getShipmentCosts(shipmentId: string): Promise<MeliShipmentCosts> {
+    return this.req(`/shipments/${shipmentId}/costs`);
   }
 
   /** Search the ML catalog by a GTIN (EAN/UPC/ISBN). status=active => publishable. */
@@ -208,6 +223,12 @@ export interface MeliItem {
   /** Item attributes; GTIN/SELLER_SKU live here. */
   attributes?: { id: string; name?: string; value_name?: string | null }[];
   variations?: MeliVariation[];
+  /** ML sub_status list (out_of_stock, paused_by_seller, deleted, …). RF-37. */
+  sub_status?: string[];
+  /** logistic_type=fulfillment => stock lives in ML Full (RF-38). */
+  shipping?: { logistic_type?: string; free_shipping?: boolean };
+  /** Set when the item has stock in ML fulfillment centers. */
+  inventory_id?: string | null;
 }
 
 /** One attribute of a variation combination (e.g. Color=Rojo). */
@@ -230,6 +251,7 @@ export interface MeliOrderItem {
   item: { id: string; title: string };
   quantity: number;
   unit_price: number;
+  /** Commission PER UNIT sold (ML docs) — multiply by quantity for the line total. */
   sale_fee?: number;
 }
 
@@ -241,7 +263,14 @@ export interface MeliOrder {
   total_amount: number;
   seller: { id: number };
   order_items: MeliOrderItem[];
-  payments?: { total_paid_amount: number }[];
+  /** Sum of taxes charged on the order (RF-39). */
+  taxes?: { amount?: number | null; currency_id?: string | null };
+  payments?: {
+    total_paid_amount: number;
+    marketplace_fee?: number | null;
+    shipping_cost?: number | null;
+    taxes_amount?: number | null;
+  }[];
   shipping?: { id: number };
 }
 
@@ -250,6 +279,15 @@ export interface MeliShipment {
   order_id?: number;
   status: string;       // pending | ready_to_ship | shipped | delivered | not_delivered | ...
   substatus?: string;
+  /** fulfillment => stored/dispatched by ML Full (RF-38). */
+  logistic_type?: string;
+}
+
+/** Response of GET /shipments/{id}/costs (only the fields we use). RF-39. */
+export interface MeliShipmentCosts {
+  gross_amount?: number | null;
+  senders?: { user_id?: number; cost?: number | null; save?: number | null }[];
+  receiver?: { user_id?: number; cost?: number | null };
 }
 
 export interface MeliListingPrice {
