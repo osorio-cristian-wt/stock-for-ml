@@ -384,6 +384,55 @@ class _DangerZoneCardState extends ConsumerState<_DangerZoneCard> {
     }
   }
 
+  /// RF-49: publicados → stock = available de su publicación ML; internos →
+  /// 0. Repara drift acumulado (p. ej. negativos por doble descuento).
+  Future<void> _recalibrate() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: const Text('¿Recalibrar stock?',
+            style: TextStyle(color: AppColors.textPrimary, fontSize: 17)),
+        content: const Text(
+          'El stock vendible de cada producto se reescribe: los publicados '
+          'quedan con las unidades que muestra su publicación en ML y los '
+          'internos quedan en 0 (para recontar). No modifica nada en ML, no '
+          'toca depósitos no vendibles ni el espejo Full, y las ventas y el '
+          'historial se conservan.',
+          style: TextStyle(color: AppColors.textMuted, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancelar',
+                style: TextStyle(color: AppColors.textMuted)),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.warning),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Recalibrar'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    setState(() => _busy = true);
+    try {
+      final adjusted =
+          await ref.read(connectionRepositoryProvider).recalibrateStock();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(adjusted == 0
+                ? 'Stock ya calibrado · nada que ajustar'
+                : 'Stock recalibrado · $adjusted producto${adjusted == 1 ? '' : 's'} ajustado${adjusted == 1 ? '' : 's'}')));
+      }
+    } catch (e) {
+      if (mounted) showAppError(context, e, title: 'No se pudo recalibrar');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Future<void> _wipe() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -428,6 +477,17 @@ class _DangerZoneCardState extends ConsumerState<_DangerZoneCard> {
             ),
             const SizedBox(height: 8),
           ],
+          OutlinedButton.icon(
+            onPressed: _busy ? null : _recalibrate,
+            icon: const Icon(Icons.restart_alt_rounded, size: 18),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.warning,
+              side: const BorderSide(color: AppColors.border),
+              minimumSize: const Size.fromHeight(44),
+            ),
+            label: const Text('Recalibrar stock'),
+          ),
+          const SizedBox(height: 8),
           OutlinedButton.icon(
             onPressed: _busy ? null : _wipe,
             icon: const Icon(Icons.delete_forever_rounded, size: 18),
