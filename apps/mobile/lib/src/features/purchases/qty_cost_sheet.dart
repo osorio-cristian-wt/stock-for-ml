@@ -44,6 +44,7 @@ class QtyCostSheet extends StatefulWidget {
     this.initialWarehouseId,
     this.onConfirmWithWarehouse,
     this.autoSaveNew = false,
+    this.requirePrice = false,
   });
 
   final String title;
@@ -51,6 +52,10 @@ class QtyCostSheet extends StatefulWidget {
   final double initialCost;
   final String confirmLabel;
   final String priceLabel;
+
+  /// RF-43: en ventas locales el precio es obligatorio (> 0) — el producto
+  /// puede haberse creado sin precio, pero no se puede vender sin él.
+  final bool requirePrice;
 
   /// Depósitos elegibles para la línea (ventas). Vacío = sin selector ni tope.
   final List<WarehouseChoice> warehouses;
@@ -111,7 +116,10 @@ class _QtyCostSheetState extends State<QtyCostSheet> {
       _costValue != widget.initialCost ||
       _warehouseId != widget.initialWarehouseId;
 
-  bool get _valid => _qty >= 1 && (_maxQty == null || _qty <= _maxQty!);
+  bool get _valid =>
+      _qty >= 1 &&
+      (_maxQty == null || _qty <= _maxQty!) &&
+      (!widget.requirePrice || _costValue > 0);
 
   Future<bool> _save() async {
     setState(() => _busy = true);
@@ -264,6 +272,14 @@ class _QtyCostSheetState extends State<QtyCostSheet> {
                       const TextStyle(color: AppColors.textPrimary, fontSize: 14),
                   decoration: const InputDecoration(hintText: '8,50'),
                 ),
+                if (widget.requirePrice && _costValue <= 0)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 8),
+                    child: Text(
+                      'Ingresá el precio para poder vender (el producto no tiene uno cargado).',
+                      style: TextStyle(fontSize: 12, color: AppColors.warning),
+                    ),
+                  ),
                 const SizedBox(height: 18),
                 FilledButton(
                   onPressed: _busy || !_valid ? null : _confirm,

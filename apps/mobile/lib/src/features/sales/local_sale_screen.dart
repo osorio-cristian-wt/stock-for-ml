@@ -146,10 +146,22 @@ class _LocalSaleScreenState extends ConsumerState<LocalSaleScreen> {
         warehouses: choices,
         initialWarehouseId: initial,
         autoSaveNew: true,
+        requirePrice: true,
         onConfirm: (_, __) async {},
         onConfirmWithWarehouse: (qty, price, wh) async {
           _upsertLine(p, qty, price, wh);
           confirmed = true;
+          // RF-43: el producto se pudo crear sin precio local; el primero que
+          // se usa en una venta queda guardado como precio del producto.
+          if ((p.salePrice == null || p.salePrice! <= 0) && price > 0) {
+            try {
+              await ref
+                  .read(productsRepositoryProvider)
+                  .update(p.copyWith(salePrice: price));
+            } catch (_) {
+              // Best-effort: la venta no depende de esto.
+            }
+          }
         },
       ),
     );
@@ -182,6 +194,7 @@ class _LocalSaleScreenState extends ConsumerState<LocalSaleScreen> {
         confirmLabel: 'Guardar',
         warehouses: choices,
         initialWarehouseId: line.warehouseId,
+        requirePrice: true,
         onConfirm: (_, __) async {},
         onConfirmWithWarehouse: (qty, price, wh) async {
           setState(() {

@@ -142,16 +142,10 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
       setState(() => _error = 'El título es obligatorio.');
       return;
     }
-    // Ambos precios son obligatorios: sin costo no hay rentabilidad y sin
-    // precio de venta la venta local no puede sugerir nada.
-    if (_costValue <= 0) {
-      setState(() => _error = 'Ingresá el costo de compra (mayor a 0).');
-      return;
-    }
-    if (_salePriceValue <= 0) {
-      setState(() => _error = 'Ingresá el precio de venta (mayor a 0).');
-      return;
-    }
+    // RF-43: costo y precio son OPCIONALES al crear (cargar rápido no se
+    // frena acá). Sin costo no hay ganancia calculada (RF-40, el producto
+    // entra al filtro "Atención") y el precio local se exige recién al
+    // confirmar una venta local.
     setState(() {
       _busy = true;
       _error = null;
@@ -174,7 +168,9 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
           brand: brand,
           purchaseCost: _costValue,
           purchaseCurrency: _currency,
-          salePrice: _salePriceValue,
+          // copyWith(null) conserva el anterior: en edición no se puede
+          // "vaciar" el precio, solo cambiarlo.
+          salePrice: _salePriceValue > 0 ? _salePriceValue : null,
           lowStockThreshold: threshold,
         );
         await repo.update(updated);
@@ -189,7 +185,7 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
           brand: brand,
           purchaseCost: _costValue,
           purchaseCurrency: _currency,
-          salePrice: _salePriceValue,
+          salePrice: _salePriceValue > 0 ? _salePriceValue : null,
           lowStockThreshold: threshold,
           imageUrl: _imageUrl,
         ));
