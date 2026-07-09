@@ -12,6 +12,7 @@ class Warehouse {
     required this.name,
     this.isDefault = false,
     this.isSellable = true,
+    this.mlFulfillment = false,
   });
 
   final String id;
@@ -25,6 +26,10 @@ class Warehouse {
   /// Whether this warehouse counts toward the available quantity published to ML.
   final bool isSellable;
 
+  /// Read-only mirror of ML Full stock (RF-38): not sellable locally, never
+  /// pushed to ML, fed exclusively by the sync.
+  final bool mlFulfillment;
+
   factory Warehouse.fromJson(Map<String, dynamic> json) => Warehouse(
         id: json['id'] as String,
         profileId: json['profile_id'] as String,
@@ -32,6 +37,7 @@ class Warehouse {
         name: json['name'] as String,
         isDefault: asBool(json['is_default']),
         isSellable: asBool(json['is_sellable'], true),
+        mlFulfillment: asBool(json['ml_fulfillment']),
       );
 
   Map<String, dynamic> toInsert() => {

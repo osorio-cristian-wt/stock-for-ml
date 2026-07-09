@@ -16,6 +16,8 @@ enum StockReason {
   bounce,
   loss,
   transfer,
+  fullSync,
+  fullInbound,
 }
 
 extension StockReasonX on StockReason {
@@ -33,6 +35,8 @@ extension StockReasonX on StockReason {
         StockReason.bounce => 'bounce',
         StockReason.loss => 'loss',
         StockReason.transfer => 'transfer',
+        StockReason.fullSync => 'full_sync',
+        StockReason.fullInbound => 'full_inbound',
       };
 
   static StockReason fromWire(String? v) => switch (v) {
@@ -49,6 +53,8 @@ extension StockReasonX on StockReason {
         'bounce' => StockReason.bounce,
         'loss' => StockReason.loss,
         'transfer' => StockReason.transfer,
+        'full_sync' => StockReason.fullSync,
+        'full_inbound' => StockReason.fullInbound,
         _ => StockReason.adjustment,
       };
 }
