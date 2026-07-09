@@ -472,8 +472,13 @@ class _MonthSummaryCard extends ConsumerWidget {
       return d != null && d.year == now.year && d.month == now.month;
     });
     final monthGross = monthSales.fold<double>(0, (a, s) => a + s.gross);
-    final monthNet = monthSales.fold<double>(
-        0, (a, s) => a + (profits[s.id]?.netProfit ?? _net(s)));
+    // RF-40: ventas de productos sin costo no suman ganancia (netProfit null)
+    // en vez de inflar el total con un costo 0.
+    final monthNet = monthSales.fold<double>(0, (a, s) {
+      final p = profits[s.id];
+      if (p != null) return a + (p.netProfit ?? 0);
+      return a + _net(s);
+    });
 
     return SurfaceCard(
       child: Row(
@@ -918,13 +923,18 @@ class _SaleDetailSheet extends ConsumerWidget {
                             fontSize: 12,
                             fontWeight: FontWeight.w600,
                             color: AppColors.textSecondary)),
-                    Text(Fmt.arsSigned(profit.netProfit),
+                    Text(
+                        profit.netProfit == null
+                            ? 'Sin costo cargado'
+                            : Fmt.arsSigned(profit.netProfit!),
                         style: TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.w700,
-                            color: profit.netProfit >= 0
-                                ? AppColors.primary
-                                : AppColors.danger)),
+                            color: profit.netProfit == null
+                                ? AppColors.textMuted
+                                : profit.netProfit! >= 0
+                                    ? AppColors.primary
+                                    : AppColors.danger)),
                   ],
                 ),
               ),

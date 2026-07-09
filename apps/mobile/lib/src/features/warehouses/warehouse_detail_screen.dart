@@ -289,6 +289,9 @@ class _WarehouseHistoryCard extends ConsumerWidget {
             m.delta >= 0 ? 'Transferencia (entrada)' : 'Transferencia (salida)'
           ),
         StockReason.initialSync => (Icons.flag_outlined, 'Stock inicial'),
+        StockReason.fullSync => (Icons.sync_rounded, 'Espejo Full (ML)'),
+        StockReason.fullInbound =>
+          (Icons.local_shipping_outlined, 'Salida a Full (atribuida)'),
         StockReason.adjustment => (Icons.tune_rounded, 'Ajuste'),
       };
 
