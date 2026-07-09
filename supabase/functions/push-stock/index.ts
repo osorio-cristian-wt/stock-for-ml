@@ -46,15 +46,18 @@ Deno.serve(async (req) => {
 
       const { data: listings } = await admin
         .from("ml_listings")
-        .select("ml_item_id, status, has_variations")
+        .select("ml_item_id, status, has_variations, logistic_type")
         .eq("product_id", row.product_id);
 
       const active = (listings ?? []).filter((l) => l.ml_item_id && l.status === "active");
       // ML rejects an item-level available_quantity on items WITH variations
       // (stock lives per variation there). Until the app tracks stock per
       // variation, skip those instead of retry-looping, and leave a note on
-      // the queue row so the skip is visible.
-      const simple = active.filter((l) => !l.has_variations);
+      // the queue row so the skip is visible. Fulfillment items are also
+      // skipped: their stock is managed by ML Full (RF-38).
+      const simple = active.filter(
+        (l) => !l.has_variations && l.logistic_type !== "fulfillment",
+      );
       const skipped = active.length - simple.length;
 
       if (account && simple.length > 0) {
@@ -74,7 +77,7 @@ Deno.serve(async (req) => {
         status: "done",
         processed_at: new Date().toISOString(),
         error: skipped > 0
-          ? `${skipped} publicación(es) con variaciones omitida(s): el push por variación no está soportado`
+          ? `${skipped} publicación(es) omitida(s): con variaciones (push por variación no soportado) o Full (stock administrado por ML)`
           : null,
       }).eq("product_id", row.product_id);
       pushed++;
