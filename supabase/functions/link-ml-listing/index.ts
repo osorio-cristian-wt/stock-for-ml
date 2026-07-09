@@ -3,8 +3,9 @@
 // Read-only ML access (GET /items) — no write scope required. The listing's
 // title stays independent from the product's stock title. Body:
 //   { product_id, ml_item_id }
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { handlePreflight, jsonResponse } from "../_shared/cors.ts";
-import { mlConfig } from "../_shared/env.ts";
+import { mlConfig, supabaseConfig } from "../_shared/env.ts";
 import { createAdminClient, getUserFromJwt } from "../_shared/supabaseAdmin.ts";
 import { MeliClient } from "../_shared/meli.ts";
 import { getValidAccessToken } from "../_shared/credentials.ts";
