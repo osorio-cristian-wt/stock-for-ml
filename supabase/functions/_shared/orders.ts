@@ -10,12 +10,67 @@
 // insert whatever compensating movement reaches that state. This is idempotent
 // and order-independent (a stale "paid" after a "cancelled" re-reads cancelled).
 import { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { MeliClient, MeliOrder, MeliShipment } from "./meli.ts";
+import { MeliClient, MeliOrder, MeliShipment, MeliShipmentCosts } from "./meli.ts";
 
 export interface MlAccountRow {
   id: string;
   profile_id: string;
   ml_user_id: number;
+}
+
+/** One typed seller-borne charge of a sale (row of sale_charges). RF-39. */
+export interface ChargeRow {
+  kind: "commission" | "shipping" | "tax" | "discount" | "financing" | "other";
+  amount: number;
+  currency_id: string;
+  source: "order" | "shipment" | "payment" | "billing";
+  raw?: Record<string, unknown>;
+}
+
+/** Extracts the seller-borne charges of an order (pure, for tests). RF-39.
+ * - commission: order_items[].sale_fee is PER UNIT (ML docs) => × quantity.
+ * - shipping:   what the seller pays for the shipment (senders[].cost).
+ * - tax:        order-level taxes total. */
+export function chargeRows(
+  order: MeliOrder,
+  shipCosts: MeliShipmentCosts | null,
+): ChargeRow[] {
+  const currency = order.currency_id ?? "ARS";
+  const rows: ChargeRow[] = [];
+
+  const commission = (order.order_items ?? []).reduce(
+    (s, i) => s + (i.sale_fee ?? 0) * Math.abs(i.quantity ?? 1),
+    0,
+  );
+  if (commission > 0) {
+    rows.push({ kind: "commission", amount: commission, currency_id: currency, source: "order" });
+  }
+
+  const sellerId = order.seller?.id;
+  const shipping = (shipCosts?.senders ?? [])
+    .filter((s) => sellerId == null || s.user_id == null || s.user_id === sellerId)
+    .reduce((s, x) => s + (x.cost ?? 0), 0);
+  if (shipping > 0) {
+    rows.push({
+      kind: "shipping",
+      amount: shipping,
+      currency_id: currency,
+      source: "shipment",
+      raw: { gross_amount: shipCosts?.gross_amount ?? null },
+    });
+  }
+
+  const tax = order.taxes?.amount ?? 0;
+  if (tax > 0) {
+    rows.push({
+      kind: "tax",
+      amount: tax,
+      currency_id: order.taxes?.currency_id ?? currency,
+      source: "order",
+    });
+  }
+
+  return rows;
 }
 
 type Fulfillment = "reserved" | "shipped" | "delivered" | "cancelled" | "bounced" | "lost";
@@ -48,11 +103,14 @@ async function reconcileOrder(
   account: MlAccountRow,
   order: MeliOrder,
   shipment: MeliShipment | null,
+  shipCosts: MeliShipmentCosts | null = null,
 ): Promise<void> {
   const orderId = String(order.id);
   const items = order.order_items ?? [];
   const totalQty = items.reduce((s, i) => s + (i.quantity ?? 0), 0);
-  const totalFee = items.reduce((s, i) => s + (i.sale_fee ?? 0), 0);
+  const charges = chargeRows(order, shipCosts);
+  const totalFee = charges.find((c) => c.kind === "commission")?.amount ?? 0;
+  const shippingCost = charges.find((c) => c.kind === "shipping")?.amount ?? 0;
   const firstItem = items[0];
 
   // Aggregate desired effect per internal product (orders may repeat an item)
@@ -109,6 +167,7 @@ async function reconcileOrder(
     unit_price: firstItem?.unit_price ?? 0,
     currency_id: order.currency_id ?? "ARS",
     sale_fee: totalFee,
+    shipping_cost: shippingCost,
     total_amount: order.total_amount ?? null,
     status: order.status,
     fulfillment_status: fulfillment,
@@ -127,15 +186,50 @@ async function reconcileOrder(
     })));
   }
 
+  // 1c) Mirror the typed charges (RF-39; same delete+insert idempotency).
+  if (saleRow?.id) {
+    await admin.from("sale_charges").delete().eq("sale_id", saleRow.id);
+    if (charges.length > 0) {
+      await admin.from("sale_charges").insert(charges.map((c) => ({
+        profile_id: account.profile_id,
+        sale_id: saleRow.id,
+        ...c,
+      })));
+    }
+  }
+
   // 2) Reconcile the ledger (origin=ml inside the function => no push to ML).
+  // Full orders dispatch from ML's warehouse, not ours (RF-38).
   if (targets.size > 0) {
+    let warehouseId: string | null = null;
+    if (shipment?.logistic_type === "fulfillment") {
+      const { data: fullWh, error: whErr } = await admin.rpc("ensure_full_warehouse", {
+        p_profile: account.profile_id,
+      });
+      if (whErr) throw new Error(`ensure_full_warehouse: ${whErr.message}`);
+      warehouseId = fullWh as string;
+    }
     const { error } = await admin.rpc("reconcile_order_stock", {
       p_profile_id: account.profile_id,
       p_order_id: orderId,
-      p_warehouse_id: null, // default dispatch warehouse
+      p_warehouse_id: warehouseId, // null => default dispatch warehouse
       p_targets: Array.from(targets.values()),
     });
     if (error) throw new Error(`reconcile_order_stock: ${error.message}`);
+  }
+}
+
+/** Seller shipping costs are best-effort: the sale reconciles fine without
+ * them and a later event re-reads the order and fills them in. */
+async function fetchShipCosts(
+  client: MeliClient | undefined,
+  shipmentId: number | string | undefined,
+): Promise<MeliShipmentCosts | null> {
+  if (!client || shipmentId == null) return null;
+  try {
+    return await client.getShipmentCosts(String(shipmentId));
+  } catch (_) {
+    return null;
   }
 }
 
@@ -151,7 +245,8 @@ export async function processOrder(
   if (shipId && client) {
     try { shipment = await client.getShipment(String(shipId)); } catch (_) { /* best-effort */ }
   }
-  await reconcileOrder(admin, account, order, shipment);
+  const costs = await fetchShipCosts(client, shipId);
+  await reconcileOrder(admin, account, order, shipment, costs);
 }
 
 /** Entry point for the shipments topic. */
@@ -164,5 +259,6 @@ export async function processShipment(
   const orderId = shipment.order_id;
   if (!orderId) return;
   const order = await client.getOrder(String(orderId));
-  await reconcileOrder(admin, account, order, shipment);
+  const costs = await fetchShipCosts(client, shipment.id);
+  await reconcileOrder(admin, account, order, shipment, costs);
 }
