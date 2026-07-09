@@ -435,6 +435,8 @@ class ProductComparisonRow {
     this.marginPct,
     this.markupPct,
     this.netProfit,
+    this.published = false,
+    this.hasCost = true,
     required this.soldUnits30d,
     required this.currentStock,
   });
@@ -445,10 +447,14 @@ class ProductComparisonRow {
   final double? marginPct;
   final double? markupPct;
   final double? netProfit;
+
+  /// Tiene publicación en ML (fila en v_product_economics).
+  final bool published;
+
+  /// RF-40: sin costo cargado ⇒ métricas null (se hunde al final y se marca).
+  final bool hasCost;
   final int soldUnits30d;
   final int currentStock;
-
-  bool get published => marginPct != null || netProfit != null;
 }
 
 /// RF-19 — compares own products side by side. Economics come from the
@@ -479,6 +485,8 @@ final productComparisonProvider =
         marginPct: economics[p.id]?.marginPct,
         markupPct: economics[p.id]?.markupPct,
         netProfit: economics[p.id]?.netProfit,
+        published: economics.containsKey(p.id),
+        hasCost: economics[p.id]?.hasCost ?? true,
         soldUnits30d: sold[p.id] ?? 0,
         currentStock: p.currentStock,
       ),
@@ -502,6 +510,31 @@ final pushIssuesProvider = FutureProvider<List<StockPushIssue>>((ref) async {
   final account = await ref.watch(mlAccountProvider.future);
   if (account == null) return const [];
   return ref.watch(connectionRepositoryProvider).pushIssues();
+});
+
+/// Jobs de import de publicaciones, en vivo (RF-36). El banner del Inicio
+/// avanza aunque los lotes los procese el cron y no la app.
+final importJobsStreamProvider = StreamProvider<List<ImportJob>>((ref) {
+  return ref.watch(connectionRepositoryProvider).watchImportJobs();
+});
+
+/// El import en curso (o en error, para reintentar), si hay.
+final activeImportJobProvider = Provider<ImportJob?>((ref) {
+  final jobs = ref.watch(importJobsStreamProvider).valueOrNull ?? const [];
+  for (final j in jobs) {
+    if (j.isRunning) return j;
+  }
+  for (final j in jobs) {
+    if (j.status == 'error') return j;
+  }
+  return null;
+});
+
+/// Ingresos a Full pendientes de atribuir (RF-38) — aviso en el Inicio.
+final fullInboundsProvider = FutureProvider<List<FullInbound>>((ref) async {
+  final account = await ref.watch(mlAccountProvider.future);
+  if (account == null) return const [];
+  return ref.watch(connectionRepositoryProvider).pendingFullInbounds();
 });
 
 /// Lets the user dismiss the "connect ML" step and enter the app anyway.
@@ -555,15 +588,15 @@ final dashboardProvider = FutureProvider<DashboardData>((ref) async {
 
   final today = sales.where((s) => isToday(s.soldAt)).toList();
   final todayGross = today.fold<double>(0, (sum, s) => sum + s.gross);
-  // Ganancia REAL: bruto − comisión − envío − costo de lo vendido (política
-  // de costeo). Si la vista aún no tiene la venta, cae al neto de ingresos.
-  final todayNet = today.fold<double>(
-    0,
-    (sum, s) =>
-        sum +
-        (profits[s.id]?.netProfit ??
-            (s.netAmount ?? (s.gross - s.saleFee - s.shippingCost))),
-  );
+  // Ganancia REAL: bruto − cargos − costo de lo vendido (política de costeo).
+  // RF-40: si la venta tiene productos sin costo, netProfit viene null y NO
+  // suma (antes inflaba con costo 0). Si la vista aún no tiene la venta, cae
+  // al neto de ingresos.
+  final todayNet = today.fold<double>(0, (sum, s) {
+    final p = profits[s.id];
+    if (p != null) return sum + (p.netProfit ?? 0);
+    return sum + (s.netAmount ?? (s.gross - s.saleFee - s.shippingCost));
+  });
 
   final margins = economics
       .map((e) => e.marginPct)

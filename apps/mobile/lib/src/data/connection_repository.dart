@@ -59,9 +59,54 @@ class ConnectionRepository {
     return Uri.parse(url);
   }
 
-  /// Kicks off the first import (publications) after linking. Best-effort.
-  Future<void> triggerInitialSync() async {
-    await _client.functions.invoke('sync-items');
+  /// Arranca (o retoma) el import de publicaciones y procesa UN lote (RF-36).
+  /// El server crea un job persistente por cuenta; llamar de nuevo continúa
+  /// desde donde quedó (idempotente). Devuelve el estado de los jobs.
+  Future<List<ImportJob>> importBatch() async {
+    final res = await _client.functions.invoke('sync-items');
+    final data = res.data as Map<String, dynamic>?;
+    final jobs = (data?['jobs'] as List?) ?? const [];
+    return [
+      for (final j in jobs) ImportJob.fromJson((j as Map).cast<String, dynamic>()),
+    ];
+  }
+
+  /// Progreso en vivo de los imports (Realtime sobre `import_jobs`): el
+  /// banner sigue avanzando aunque el lote lo procese el cron y no la app.
+  Stream<List<ImportJob>> watchImportJobs() {
+    return _client
+        .from('import_jobs')
+        .stream(primaryKey: ['id'])
+        .order('started_at')
+        .map((rows) => [for (final r in rows) ImportJob.fromJson(r)]);
+  }
+
+  /// Ingresos a Full detectados y pendientes de atribuir (RF-38).
+  Future<List<FullInbound>> pendingFullInbounds() async {
+    final rows = await _client
+        .from('full_inbounds')
+        .select()
+        .eq('status', 'pending')
+        .order('detected_at', ascending: false);
+    return [for (final r in rows) FullInbound.fromJson(r)];
+  }
+
+  /// La mercadería salió de [warehouseId]: descuenta SOLO local (sin push).
+  Future<void> attributeFullInbound({
+    required String inboundId,
+    required String warehouseId,
+  }) async {
+    await _client.rpc('attribute_full_inbound', params: {
+      'p_inbound_id': inboundId,
+      'p_warehouse_id': warehouseId,
+    });
+  }
+
+  /// No salió de un depósito local (p. ej. compra directa a Full).
+  Future<void> dismissFullInbound(String inboundId) async {
+    await _client.rpc('dismiss_full_inbound', params: {
+      'p_inbound_id': inboundId,
+    });
   }
 
   /// Live ML-side stock per variation of a listing (empty for simple
@@ -72,6 +117,19 @@ class ConnectionRepository {
         .stream(primaryKey: ['id'])
         .eq('ml_listing_id', listingId)
         .map((rows) => [for (final r in rows) ListingVariation.fromJson(r)]);
+  }
+
+  /// Busca publicaciones ESPEJADAS (RF-41): sync-items ya trae todas las del
+  /// vendedor a `ml_listings`, así que el picker de vinculación no necesita
+  /// consultar ML — busca sobre la base propia por título o código.
+  Future<List<MlListing>> searchListings(String query, {int limit = 25}) async {
+    var builder = _client.from('ml_listings').select();
+    final q = query.trim().replaceAll(RegExp(r'[,()"\\]'), ' ').trim();
+    if (q.isNotEmpty) {
+      builder = builder.or('title.ilike.%$q%,ml_item_id.ilike.%$q%');
+    }
+    final rows = await builder.order('title').limit(limit);
+    return [for (final r in rows) MlListing.fromJson(r)];
   }
 
   /// Links an existing ML publication (e.g. "MLA123") to an internal product.
@@ -122,6 +180,95 @@ class ConnectionRepository {
     await _client.rpc('retry_stock_push');
     await _client.functions.invoke('push-stock');
   }
+
+  /// RF-46 · Actividad ML: últimos pushes de stock (cola completa, no solo
+  /// los fallidos como [pushIssues]).
+  Future<List<StockPushEntry>> recentPushes({int limit = 50}) async {
+    final rows = await _client
+        .from('stock_push_queue')
+        .select('product_id, status, attempts, error, enqueued_at, processed_at')
+        .order('enqueued_at', ascending: false)
+        .limit(limit);
+    return [for (final r in rows) StockPushEntry.fromJson(r)];
+  }
+
+  /// RF-46 · Actividad ML: movimientos que LLEGARON desde ML (ventas
+  /// reconciliadas, espejo Full, siembras de import).
+  Future<List<StockMovement>> recentMlMovements({int limit = 50}) async {
+    final rows = await _client
+        .from('stock_movements')
+        .select()
+        .eq('origin', 'ml')
+        .order('created_at', ascending: false)
+        .limit(limit);
+    return [for (final r in rows) StockMovement.fromJson(r)];
+  }
+
+  /// RF-46 · Actividad ML: historial de imports (terminados incluidos).
+  Future<List<ImportJob>> recentImportJobs({int limit = 10}) async {
+    final rows = await _client
+        .from('import_jobs')
+        .select()
+        .order('started_at', ascending: false)
+        .limit(limit);
+    return [for (final r in rows) ImportJob.fromJson(r)];
+  }
+
+  /// RF-47: reactiva publicaciones pausadas por el vendedor (PUT status=active
+  /// vía Edge Function). Las pausadas por falta de stock no lo necesitan: el
+  /// push de stock las reactiva solo.
+  Future<void> reactivateListings(List<String> mlItemIds) async {
+    final res = await _client.functions.invoke('reactivate-listing', body: {
+      'ml_item_ids': mlItemIds,
+    });
+    final data = res.data as Map<String, dynamic>?;
+    final errors = (data?['errors'] as List?) ?? const [];
+    if (errors.isNotEmpty) {
+      throw StateError(errors.join(' · '));
+    }
+  }
+
+  /// RF-45: revoca credenciales y desvincula la cuenta ML. El histórico
+  /// (productos, ventas, espejos) se CONSERVA — solo deja de sincronizar.
+  Future<void> disconnectMl() async {
+    await _client.rpc('disconnect_ml');
+  }
+
+  /// RF-45: borra TODOS los datos del perfil en la nube (transaccional,
+  /// scoped al propio profile_id en el server).
+  Future<void> wipeAllData() async {
+    await _client.rpc('wipe_profile_data');
+  }
+}
+
+/// RF-46: una fila de la cola de push (para la línea de tiempo de Actividad).
+class StockPushEntry {
+  const StockPushEntry({
+    required this.productId,
+    required this.status,
+    required this.attempts,
+    this.error,
+    this.enqueuedAt,
+    this.processedAt,
+  });
+
+  final String productId;
+  final String status;
+  final int attempts;
+  final String? error;
+  final DateTime? enqueuedAt;
+  final DateTime? processedAt;
+
+  factory StockPushEntry.fromJson(Map<String, dynamic> j) => StockPushEntry(
+        productId: j['product_id'] as String,
+        status: (j['status'] as String?) ?? 'pending',
+        attempts: (j['attempts'] as num?)?.toInt() ?? 0,
+        error: j['error'] as String?,
+        enqueuedAt: DateTime.tryParse('${j['enqueued_at']}'),
+        processedAt: j['processed_at'] == null
+            ? null
+            : DateTime.tryParse('${j['processed_at']}'),
+      );
 }
 
 /// Un producto cuyo stock no pudo subirse a ML (o está demorado).

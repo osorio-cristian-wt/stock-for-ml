@@ -87,4 +87,10 @@ class PendingOpsRepository {
       lastError: Value(null),
     ));
   }
+
+  /// RF-45: "borrar todos los datos" también vacía la cola offline local —
+  /// una op pendiente de una cuenta borrada no debe subirse jamás.
+  Future<void> clearAll() {
+    return _db.delete(_db.pendingOps).go();
+  }
 }

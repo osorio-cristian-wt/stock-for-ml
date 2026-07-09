@@ -1,26 +1,40 @@
 import 'package:core_models/core_models.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-/// Ganancia real de una venta (fila de `v_sale_profit`): bruto − comisión −
-/// envío − costo de lo vendido según la política de costeo del perfil.
+/// Ganancia real de una venta (fila de `v_sale_profit`): bruto − cargos
+/// (comisión + envío + impuestos, RF-39) − costo de lo vendido según la
+/// política de costeo del perfil.
 class SaleProfit {
   const SaleProfit({
     required this.saleId,
     required this.gross,
     required this.costArs,
     required this.netProfit,
+    this.chargesArs = 0,
+    this.hasFullCost = true,
   });
 
   final String saleId;
   final double gross;
   final double? costArs;
-  final double netProfit;
+
+  /// Null cuando algún producto de la venta no tiene costo cargado (RF-40):
+  /// mejor "sin calcular" que un número inflado.
+  final double? netProfit;
+
+  /// Σ sale_charges (o comisión+envío legacy si aún no hay cargos).
+  final double chargesArs;
+
+  /// false ⇒ la venta incluye productos sin costo (netProfit null).
+  final bool hasFullCost;
 
   factory SaleProfit.fromJson(Map<String, dynamic> j) => SaleProfit(
         saleId: j['sale_id'] as String,
         gross: (j['gross'] as num?)?.toDouble() ?? 0,
         costArs: (j['cost_ars'] as num?)?.toDouble(),
-        netProfit: (j['net_profit'] as num?)?.toDouble() ?? 0,
+        netProfit: (j['net_profit'] as num?)?.toDouble(),
+        chargesArs: (j['charges_ars'] as num?)?.toDouble() ?? 0,
+        hasFullCost: (j['has_full_cost'] as bool?) ?? true,
       );
 }
 
@@ -59,7 +73,7 @@ class EconomicsRepository {
   Future<List<SaleProfit>> saleProfits({int limit = 300}) async {
     final rows = await _client
         .from('v_sale_profit')
-        .select('sale_id, gross, cost_ars, net_profit')
+        .select('sale_id, gross, cost_ars, net_profit, charges_ars, has_full_cost')
         .order('sold_at', ascending: false)
         .limit(limit);
     return rows.map<SaleProfit>((r) => SaleProfit.fromJson(r)).toList();
