@@ -117,6 +117,44 @@
   insuficiente al sincronizar). *(2026-07-03, etapa B1 de
   [analisis-cola-offline.md](analisis-cola-offline.md))*
 
+### Mejoras julio 2026 (aprobadas 2026-07-08; detalle en [analisis-mejoras-2026-07.md](analisis-mejoras-2026-07.md))
+- **RF-36** Import de publicaciones **por lotes con progreso** (`import_jobs`:
+  total/procesados/errores, reanudable, en segundo plano server-side; la app
+  muestra el avance por Realtime). Re-importar es idempotente.
+- **RF-37** Espejar el **estado completo** de la publicación (7 estados ML +
+  `sub_status` como `out_of_stock`/`paused_by_seller`) y mostrarlo (chip +
+  filtro en Productos).
+- **RF-38** Depósito **"Full (ML)" espejo read-only** (stock distribuido /
+  fulfillment): no vendible, excluido del push; las órdenes `fulfillment`
+  descuentan de ahí. **Atribución de ingreso:** al detectar mercadería nueva
+  en Full, el usuario elige de qué depósito local salió → descuento solo
+  local, sin push a ML.
+- **RF-39** **Cargos tipados por venta** (`sale_charges`: comisión, envío del
+  vendedor, impuestos, descuentos…) poblados desde la orden + `shipments/
+  {id}/costs` + payments; `v_sale_profit` descuenta todos los cargos.
+- **RF-40** Productos **sin costo** no calculan ganancia (profit `null`, no 0
+  inflado), quedan fuera/aparte de stats y Comparativa; vista dedicada
+  "Completar costos" + banner "N productos necesitan tu atención" en Productos.
+- **RF-41** Vincular publicación con **buscador sobre las publicaciones
+  espejadas** (título/SKU/GTIN, prioriza no vinculadas); pegar el código queda
+  como fallback.
+- **RF-42** Detalle de producto: **precio de ML read-only** (editar → mensaje
+  "se modifica en MercadoLibre" + permalink) y **márgenes por canal** (ML con
+  comisión/envío estimados vs local).
+- **RF-43** **Precio local opcional al crear** el producto; obligatorio recién
+  al confirmar una venta local (con opción de guardarlo en el producto).
+- **RF-44** Tab **Stats**: ganancia real por período con filtros (fechas,
+  canal, categoría, depósito), top productos, rotación.
+- **RF-45** Ajustes → zona peligrosa: **desconectar ML** (revoca credenciales,
+  conserva histórico) y **borrar todos los datos** (RPC transaccional +
+  limpieza local + confirmación fuerte).
+- **RF-46** Pantalla **"Actividad ML"**: pushes de stock, eventos recibidos,
+  cambios de estado de publicaciones e imports, con errores visibles (cierra
+  RNF-07).
+- **RF-47** Al sacar un producto de 0 a >0: aviso y, para publicaciones
+  `paused_by_seller`, **prompt de reactivación** (push `status=active`);
+  las `out_of_stock` se reactivan solas con el push de stock.
+
 ### Notificaciones
 - **RF-21** Recibir webhooks de ML (`orders_v2`, `items`, `items_prices`,
   `item_competition`) y procesarlos de forma asíncrona y confiable.
@@ -169,9 +207,17 @@
 | RF-07 variaciones | 🟡 Parcial: espejo `listing_variations` + UI en detalle; push por variación no soportado (se omite con nota en la cola) |
 | RF-19 comparativa entre productos | ✅ Pantalla "Comparativa" (margen/markup/ganancia/rotación 30d) desde Productos |
 | RF-22 push FCM | ⏸ Bloqueado por credenciales Firebase/APNs del dueño ([firebase.md](firebase.md)) |
+| RF-36…RF-47 (mejoras julio 2026) | ✅ Implementado 2026-07-09 (suites verdes: pgTAP 174, Deno 18, core_models 25, Flutter 4, analyze limpio); pendiente de **deploy**: migraciones 20260708*, funciones `sync-items` (reescrita), `reactivate-listing` (nueva), `link-ml-listing` (fix imports), `push-stock`, `_shared/*` |
 | RNF-01…04, RNF-06, RNF-08 | ✅ (RLS, colas idempotentes, rate-friendly, tests, entornos 743x + [setup.md](setup.md)) |
 | RNF-05 offline | ✅ Cola local persistente `pending_ops` (RF-35): confirmar sin red encola y sube solo al reconectar ([analisis-cola-offline.md](analisis-cola-offline.md)); las LECTURAS siguen requiriendo conexión |
-| RNF-07 observabilidad | 🟡 `stock_push_queue` ahora visible en la app (banner + reintento); `ml_events.error` sigue solo en base |
+| RNF-07 observabilidad | ✅ Pantalla "Actividad ML" (RF-46): pushes, imports y movimientos origin=ml visibles; `ml_events.error` sigue solo en base (sin profile_id para RLS) |
+
+**Nota de deploy (RF-36):** el cron nuevo `ml-sync-items-drain` se registra solo
+al aplicar `20260708125000_import_drain_cron.sql` si `private.app_config` está
+configurado; si no, correr `select private.register_ml_cron_jobs();` tras el
+deploy. **Bug preexistente arreglado:** `link-ml-listing` fallaba SIEMPRE con
+500 (`supabaseConfig`/`createClient` sin importar) — la vinculación manual
+nunca funcionó en cloud hasta este fix.
 
 Fuera de requisitos pero decidido con el dueño: crear borrador en ML
 (`publish-item`) espera confirmación de scopes OAuth de escritura; el import
