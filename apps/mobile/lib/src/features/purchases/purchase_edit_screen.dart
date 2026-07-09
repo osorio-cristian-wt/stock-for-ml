@@ -13,6 +13,7 @@ import '../../ui/errors.dart';
 import '../../ui/format.dart';
 import '../../ui/widgets/add_products_card.dart';
 import '../../ui/widgets/app_widgets.dart';
+import '../connect_ml/reactivation_prompt.dart';
 import '../parties/party_form_sheet.dart';
 import '../products/product_form_screen.dart';
 import '../scan/code_scanner_screen.dart';
@@ -234,7 +235,14 @@ class _PurchaseEditScreenState extends ConsumerState<PurchaseEditScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Compra cerrada · stock actualizado')),
         );
-        Navigator.of(context).pop();
+        // RF-47: la compra pudo sacar productos de 0 — ofrecer reactivar sus
+        // publicaciones pausadas por el vendedor antes de salir.
+        await maybeOfferReactivation(
+          context,
+          ref,
+          [for (final i in items) i.productId],
+        );
+        if (mounted) Navigator.of(context).pop();
       }
     } catch (e) {
       if (AppErrors.isOffline(e)) {

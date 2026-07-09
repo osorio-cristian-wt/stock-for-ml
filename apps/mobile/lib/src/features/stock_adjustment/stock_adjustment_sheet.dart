@@ -8,6 +8,7 @@ import '../../data/supabase_providers.dart';
 import '../../theme/app_colors.dart';
 import '../../ui/errors.dart';
 import '../../util/uuid.dart';
+import '../connect_ml/reactivation_prompt.dart';
 
 /// Screen 07 · Ajuste de stock (bottom sheet). Registers a stock movement.
 /// Supabase is the source of truth; user-origin movements are pushed to ML by
@@ -81,7 +82,12 @@ class _StockAdjustmentSheetState extends ConsumerState<StockAdjustmentSheet> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Movimiento registrado · sincronizando con ML')),
         );
-        Navigator.of(context).pop();
+        // RF-47: si el ajuste repuso stock, ofrecer reactivar publicaciones
+        // pausadas por el vendedor.
+        if (_delta > 0) {
+          await maybeOfferReactivation(context, ref, [widget.product.id]);
+        }
+        if (mounted) Navigator.of(context).pop();
       }
     } catch (e) {
       if (AppErrors.isOffline(e)) {
