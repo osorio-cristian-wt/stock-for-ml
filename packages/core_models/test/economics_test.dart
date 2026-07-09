@@ -51,5 +51,29 @@ void main() {
     expect(pe.title, 'Auriculares');
     expect(pe.netProfit, 11800);
     expect(pe.markupPct, 115.69);
+    // Sin has_cost explícito: se infiere del costo > 0 (filas pre-RF-40).
+    expect(pe.hasCost, isTrue);
+  });
+
+  test('ProductEconomics sin costo (RF-40): profit null y hasCost=false', () {
+    final pe = ProductEconomics.fromJson({
+      'listing_id': 'l2',
+      'product_id': 'p2',
+      'title': 'Sin costo',
+      'ml_item_id': 'MLA2',
+      'sale_price': 9000,
+      'currency_id': 'ARS',
+      'cost_in_sale_currency': 0,
+      'est_sale_fee': 900,
+      'net_profit': null,
+      'markup_pct': null,
+      'margin_pct': null,
+      'fx_rate': 1200,
+      'has_cost': false,
+    });
+    expect(pe.hasCost, isFalse);
+    expect(pe.netProfit, isNull);
+    expect(pe.markupPct, isNull);
+    expect(pe.marginPct, isNull);
   });
 }

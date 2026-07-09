@@ -1,6 +1,7 @@
 import 'package:meta/meta.dart';
 
 import 'json.dart';
+import 'ml_listing.dart';
 
 /// Pure profit math — mirrors the SQL view `public.v_product_economics`
 /// and the TS `computeEconomics`. Single source of truth on the client.
@@ -67,6 +68,11 @@ class ProductEconomics {
     required this.markupPct,
     required this.marginPct,
     required this.fxRate,
+    this.hasCost = true,
+    this.listingStatus = ListingStatus.unknown,
+    this.subStatus = const [],
+    this.logisticType,
+    this.permalink,
   });
 
   final String listingId;
@@ -77,10 +83,33 @@ class ProductEconomics {
   final String currencyId;
   final double costInSaleCurrency;
   final double estSaleFee;
-  final double netProfit;
+
+  /// Null when the product has no purchase cost loaded (RF-40): the view
+  /// refuses to compute a fake profit instead of inflating it with cost 0.
+  final double? netProfit;
   final double? markupPct;
   final double? marginPct;
   final double fxRate;
+
+  /// Whether the product has a usable purchase cost (RF-40). Without it,
+  /// profit/markup/margin are null and the product must stay out of stats.
+  final bool hasCost;
+
+  /// Estado de la publicación en ML (RF-37): chips y filtros en Productos.
+  final ListingStatus listingStatus;
+
+  /// sub_status de ML (out_of_stock, paused_by_seller, …). RF-37.
+  final List<String> subStatus;
+
+  /// fulfillment ⇒ stock administrado por ML Full (RF-38).
+  final String? logisticType;
+
+  /// Link a la publicación en ML (RF-42: el precio se modifica allá).
+  final String? permalink;
+
+  bool get isFulfillment => logisticType == 'fulfillment';
+  bool get isPausedBySeller => subStatus.contains('paused_by_seller');
+  bool get isOutOfStock => subStatus.contains('out_of_stock');
 
   factory ProductEconomics.fromJson(Map<String, dynamic> json) =>
       ProductEconomics(
@@ -92,9 +121,16 @@ class ProductEconomics {
         currencyId: (json['currency_id'] as String?) ?? 'ARS',
         costInSaleCurrency: asDouble(json['cost_in_sale_currency']),
         estSaleFee: asDouble(json['est_sale_fee']),
-        netProfit: asDouble(json['net_profit']),
+        netProfit: asDoubleOrNull(json['net_profit']),
         markupPct: asDoubleOrNull(json['markup_pct']),
         marginPct: asDoubleOrNull(json['margin_pct']),
         fxRate: asDouble(json['fx_rate']),
+        hasCost: asBool(json['has_cost'], asDouble(json['cost_in_sale_currency']) > 0),
+        listingStatus: listingStatusFrom(json['listing_status'] as String?),
+        subStatus: [
+          for (final s in (json['sub_status'] as List?) ?? const []) s as String,
+        ],
+        logisticType: json['logistic_type'] as String?,
+        permalink: json['permalink'] as String?,
       );
 }
