@@ -73,6 +73,26 @@ export function chargeRows(
   return rows;
 }
 
+/** True when the order predates the listing mirror (pure, for tests).
+ *
+ * The initial import seeds stock from ML's CURRENT available_quantity, which
+ * already has every past sale discounted on ML's side. Reconciling one of
+ * those historical orders would discount the sale a second time (the "-9
+ * stock" bug). Pre-tracking orders are still recorded as sales (history,
+ * stats, charges) but their stock effect is pinned to zero — and because
+ * reconcile_order_stock compensates toward the desired state, re-running
+ * sync-orders REPAIRS any double discount already applied. */
+export function preTracking(
+  orderDate: string | null | undefined,
+  listingCreatedAt: string | null | undefined,
+): boolean {
+  if (!orderDate || !listingCreatedAt) return false;
+  const order = new Date(orderDate).getTime();
+  const mirrored = new Date(listingCreatedAt).getTime();
+  if (Number.isNaN(order) || Number.isNaN(mirrored)) return false;
+  return order < mirrored;
+}
+
 type Fulfillment = "reserved" | "shipped" | "delivered" | "cancelled" | "bounced" | "lost";
 interface Effect { reserved: number; on_hand: number; fulfillment: Fulfillment }
 
@@ -131,7 +151,7 @@ async function reconcileOrder(
     if (!itemId) continue;
     const { data: listing } = await admin
       .from("ml_listings")
-      .select("product_id")
+      .select("product_id, created_at")
       .eq("profile_id", account.profile_id)
       .eq("ml_item_id", itemId)
       .maybeSingle();
@@ -149,9 +169,12 @@ async function reconcileOrder(
 
     const eff = effectFor(order.status, shipment?.status, qty);
     fulfillment = eff.fulfillment;
+    // Pre-tracking orders keep a ZERO target (instead of being skipped) so
+    // reconcile_order_stock compensates any double discount already applied.
+    const zero = preTracking(order.date_created, listing.created_at);
     const t = targets.get(listing.product_id) ?? { product_id: listing.product_id, reserved: 0, on_hand: 0 };
-    t.reserved += eff.reserved;
-    t.on_hand += eff.on_hand;
+    t.reserved += zero ? 0 : eff.reserved;
+    t.on_hand += zero ? 0 : eff.on_hand;
     targets.set(listing.product_id, t);
   }
 
