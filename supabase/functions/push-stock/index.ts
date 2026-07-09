@@ -49,7 +49,13 @@ Deno.serve(async (req) => {
         .select("ml_item_id, status, has_variations, logistic_type")
         .eq("product_id", row.product_id);
 
-      const active = (listings ?? []).filter((l) => l.ml_item_id && l.status === "active");
+      // Paused listings MUST receive the PUT too: ML pauses an item when its
+      // stock hits 0 (sub_status out_of_stock) and reactivates it alone when a
+      // quantity > 0 arrives — skipping them would leave the listing stuck
+      // paused forever. Only closed/under_review/etc. are untouchable.
+      const active = (listings ?? []).filter(
+        (l) => l.ml_item_id && (l.status === "active" || l.status === "paused"),
+      );
       // ML rejects an item-level available_quantity on items WITH variations
       // (stock lives per variation there). Until the app tracks stock per
       // variation, skip those instead of retry-looping, and leave a note on
