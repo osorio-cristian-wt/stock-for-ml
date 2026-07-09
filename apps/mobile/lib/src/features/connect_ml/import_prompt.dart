@@ -1,8 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../data/queries.dart';
-import '../../data/supabase_providers.dart';
+import '../../data/import_service.dart';
 import '../../theme/app_colors.dart';
 
 bool _offeredThisSession = false;
@@ -10,6 +11,10 @@ bool _offeredThisSession = false;
 /// Tras el primer login exitoso con ML, ofrece importar las publicaciones del
 /// vendedor ahí mismo (RF-05). Se muestra una sola vez por sesión y es seguro
 /// repetirlo: el import es idempotente (dedup por GTIN/SKU, no pisa stock).
+///
+/// RF-36: ya no bloquea con un diálogo — el import corre en segundo plano por
+/// lotes (server-side) y el progreso se ve en el banner del Inicio, con el
+/// cron del backend como red de seguridad si se cierra la app.
 Future<void> offerInitialImport(BuildContext context, WidgetRef ref) async {
   if (_offeredThisSession) return;
   _offeredThisSession = true;
@@ -21,8 +26,9 @@ Future<void> offerInitialImport(BuildContext context, WidgetRef ref) async {
       title: const Text('Cuenta conectada',
           style: TextStyle(color: AppColors.textPrimary)),
       content: const Text(
-        '¿Importamos tus publicaciones de MercadoLibre ahora? Se crean como '
-        'productos de stock (sin duplicar los que ya tengas).',
+        '¿Importamos tus publicaciones de MercadoLibre ahora? Corre en '
+        'segundo plano y se crean como productos de stock (sin duplicar '
+        'los que ya tengas).',
         style: TextStyle(color: AppColors.textMuted, height: 1.4),
       ),
       actions: [
@@ -40,44 +46,13 @@ Future<void> offerInitialImport(BuildContext context, WidgetRef ref) async {
   );
   if (go != true || !context.mounted) return;
 
-  // Blocking progress while sync-items runs server-side.
-  showDialog<void>(
-    context: context,
-    barrierDismissible: false,
-    builder: (_) => const AlertDialog(
-      backgroundColor: AppColors.surface,
-      content: Row(
-        children: [
-          SizedBox(
-            width: 22,
-            height: 22,
-            child: CircularProgressIndicator(
-                strokeWidth: 2.4, color: AppColors.primary),
-          ),
-          SizedBox(width: 16),
-          Expanded(
-            child: Text('Importando publicaciones…',
-                style: TextStyle(color: AppColors.textPrimary, fontSize: 14)),
-          ),
-        ],
-      ),
-    ),
-  );
+  startImportInBackground(context, ref);
+}
 
-  String? error;
-  try {
-    await ref.read(connectionRepositoryProvider).triggerInitialSync();
-  } catch (e) {
-    error = e.toString().split('\n').first;
-  }
-  if (!context.mounted) return;
-  Navigator.of(context, rootNavigator: true).pop(); // cierra el progreso
-
-  ref.invalidate(productsStreamProvider);
-  ref.invalidate(economicsProvider);
-  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-    content: Text(error == null
-        ? 'Publicaciones importadas · revisá Productos'
-        : 'No se pudo importar: $error'),
+/// Lanza el import sin bloquear y avisa dónde seguir el progreso.
+void startImportInBackground(BuildContext context, WidgetRef ref) {
+  unawaited(ref.read(importServiceProvider).start());
+  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+    content: Text('Importando en segundo plano · seguí el avance en Inicio'),
   ));
 }

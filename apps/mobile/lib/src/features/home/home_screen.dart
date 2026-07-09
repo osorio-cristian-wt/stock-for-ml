@@ -11,6 +11,7 @@ import '../../ui/widgets/app_widgets.dart';
 import '../../ui/widgets/brand_logo.dart';
 import '../connect_ml/connect_ml_screen.dart';
 import '../products/product_detail_screen.dart';
+import 'sync_banners.dart';
 
 /// Screen 03 · Inicio. Dashboard with today's sales, profit, FX, counters and
 /// the products that need restocking.
@@ -40,6 +41,7 @@ class HomeScreen extends ConsumerWidget {
             ref.invalidate(dashboardProvider);
             ref.invalidate(alertsProvider);
             ref.invalidate(pushIssuesProvider);
+            ref.invalidate(fullInboundsProvider);
             await ref.read(dashboardProvider.future);
           },
           child: ListView(
@@ -62,7 +64,9 @@ class HomeScreen extends ConsumerWidget {
                     ),
                   ),
                 ),
+              const ImportProgressBanner(),
               const _PushIssuesBanner(),
+              const FullInboundsBanner(),
               dashAsync.when(
                 loading: () => const Padding(
                   padding: EdgeInsets.only(top: 60),
