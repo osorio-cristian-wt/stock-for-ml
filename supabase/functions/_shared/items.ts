@@ -4,11 +4,15 @@ import { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { MeliClient, MeliItem, MeliVariation } from "./meli.ts";
 import { MlAccountRow } from "./orders.ts";
 
+// Full ML status coverage (RF-37); unknown future values fall back to inactive.
 const statusMap: Record<string, string> = {
   active: "active",
   paused: "paused",
   closed: "closed",
   under_review: "under_review",
+  inactive: "inactive",
+  not_yet_active: "not_yet_active",
+  payment_required: "payment_required",
 };
 
 /** Quotes a value for a PostgREST filter so `,`/`(`/`)`/`.` inside a SKU or
@@ -33,6 +37,11 @@ export function variationRows(
   }));
 }
 
+/** True when the item's stock is stored/managed by ML Full (RF-38). */
+export function isFulfillment(item: MeliItem): boolean {
+  return item.shipping?.logistic_type === "fulfillment";
+}
+
 export async function upsertItem(
   admin: SupabaseClient,
   account: MlAccountRow,
@@ -42,6 +51,7 @@ export async function upsertItem(
   forceProductId?: string,
 ): Promise<void> {
   const item: MeliItem = await client.getItem(itemId);
+  let isNewProduct = false;
 
   // Ensure a linked internal product exists (ML + internal-stock model).
   const { data: existing } = await admin
@@ -126,10 +136,12 @@ export async function upsertItem(
         .select("id")
         .single();
       productId = prod?.id ?? null;
+      isNewProduct = true;
 
       // Seed stock once, from ML, only for the brand-new product. origin=ml so
-      // the trigger does NOT echo it back to ML.
-      if (productId && item.available_quantity > 0) {
+      // the trigger does NOT echo it back to ML. Fulfillment items skip this:
+      // their stock lives in ML Full and is mirrored below (RF-38).
+      if (productId && item.available_quantity > 0 && !isFulfillment(item)) {
         await admin.from("stock_movements").insert({
           profile_id: account.profile_id,
           product_id: productId,
@@ -165,11 +177,28 @@ export async function upsertItem(
     sold_quantity: item.sold_quantity,
     est_sale_fee: estFee,
     status: statusMap[item.status] ?? "inactive",
+    sub_status: item.sub_status ?? [],
+    logistic_type: item.shipping?.logistic_type ?? null,
+    inventory_id: item.inventory_id ?? null,
     permalink: item.permalink,
     thumbnail: item.thumbnail,
     has_variations: (item.variations?.length ?? 0) > 0,
     last_synced_at: new Date().toISOString(),
   }, { onConflict: "profile_id,ml_item_id" }).select("id").single();
+
+  // Mirror ML-Full stock into the read-only Full warehouse (RF-38). Increases
+  // land in full_inbounds for the user to attribute — except right after
+  // creating the product (nothing local to attribute the stock to).
+  if (productId && isFulfillment(item)) {
+    const { error: fullErr } = await admin.rpc("reconcile_full_stock", {
+      p_profile_id: account.profile_id,
+      p_product_id: productId,
+      p_qty: item.available_quantity ?? 0,
+      p_reference: item.id,
+      p_track_inbound: !isNewProduct,
+    });
+    if (fullErr) throw new Error(`reconcile_full_stock: ${fullErr.message}`);
+  }
 
   // Mirror the listing's variations (size/color/… each with ML-side stock).
   // Stock truth per variation stays in ML for now: the app surfaces the
