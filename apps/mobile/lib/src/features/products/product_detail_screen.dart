@@ -2,6 +2,7 @@ import 'package:core_models/core_models.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../data/queries.dart';
 import '../../data/supabase_providers.dart';
@@ -90,9 +91,10 @@ class _Body extends StatelessWidget {
       children: [
         _Header(product: product, economics: economics),
         const SizedBox(height: 16),
-        if (published)
-          _ProfitCard(economics: economics!)
-        else
+        if (published) ...[
+          _ProfitCard(economics: economics!),
+          _ChannelMarginsCard(product: product, economics: economics!),
+        ] else
           _InternalCostCard(product: product),
         const SizedBox(height: 12),
         _StockCard(product: product),
@@ -173,7 +175,7 @@ class _LinkMlCard extends ConsumerWidget {
                           fontSize: 14,
                           fontWeight: FontWeight.w600,
                           color: AppColors.textPrimary)),
-                  Text('Pegá el código (MLA…) de una publicación existente',
+                  Text('Buscá entre tus publicaciones importadas',
                       style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
                 ],
               ),
@@ -195,23 +197,50 @@ class _LinkMlSheet extends ConsumerStatefulWidget {
   ConsumerState<_LinkMlSheet> createState() => _LinkMlSheetState();
 }
 
+/// RF-41: buscador sobre las publicaciones YA espejadas por sync-items —
+/// nada de pegar el código a mano (queda como fallback para publicaciones
+/// muy nuevas que todavía no se importaron).
 class _LinkMlSheetState extends ConsumerState<_LinkMlSheet> {
-  final _code = TextEditingController();
+  final _query = TextEditingController();
+  List<MlListing> _results = const [];
+  bool _searching = false;
   bool _busy = false;
+  bool _manualMode = false;
   String? _error;
 
   @override
+  void initState() {
+    super.initState();
+    // Arranca sugiriendo por el título del producto (matcheo probable).
+    _query.text = widget.product.title;
+    _search();
+  }
+
+  @override
   void dispose() {
-    _code.dispose();
+    _query.dispose();
     super.dispose();
   }
 
-  Future<void> _confirm() async {
-    final code = _code.text.trim().toUpperCase();
-    if (code.isEmpty) {
-      setState(() => _error = 'Ingresá el código de la publicación.');
-      return;
+  Future<void> _search() async {
+    setState(() => _searching = true);
+    try {
+      final rows = await ref
+          .read(connectionRepositoryProvider)
+          .searchListings(_query.text);
+      if (mounted) setState(() => _results = rows);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _error = 'No se pudo buscar. ${_firstLine(e)}');
+      }
+    } finally {
+      if (mounted) setState(() => _searching = false);
     }
+  }
+
+  static String _firstLine(Object e) => e.toString().split('\n').first;
+
+  Future<void> _link(String mlItemId) async {
     setState(() {
       _busy = true;
       _error = null;
@@ -219,7 +248,7 @@ class _LinkMlSheetState extends ConsumerState<_LinkMlSheet> {
     try {
       await ref.read(connectionRepositoryProvider).linkListing(
             productId: widget.product.id,
-            mlItemId: code,
+            mlItemId: mlItemId.trim().toUpperCase(),
           );
       ref.invalidate(economicsProvider);
       if (mounted) {
@@ -231,7 +260,7 @@ class _LinkMlSheetState extends ConsumerState<_LinkMlSheet> {
     } catch (e) {
       setState(() {
         _busy = false;
-        _error = 'No se pudo vincular. ${e.toString().split('\n').first}';
+        _error = 'No se pudo vincular. ${_firstLine(e)}';
       });
     }
   }
@@ -258,30 +287,135 @@ class _LinkMlSheetState extends ConsumerState<_LinkMlSheet> {
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(fontSize: 13, color: AppColors.textMuted)),
               const SizedBox(height: 16),
-              TextField(
-                controller: _code,
-                autofocus: true,
-                textCapitalization: TextCapitalization.characters,
-                style: const TextStyle(color: AppColors.textPrimary, fontSize: 14),
-                decoration: const InputDecoration(hintText: 'MLA1234567890'),
-              ),
+              if (!_manualMode) ...[
+                TextField(
+                  controller: _query,
+                  onSubmitted: (_) => _search(),
+                  style:
+                      const TextStyle(color: AppColors.textPrimary, fontSize: 14),
+                  decoration: InputDecoration(
+                    hintText: 'Buscar por título o código…',
+                    prefixIcon: const Icon(Icons.search,
+                        color: AppColors.textFaint, size: 20),
+                    suffixIcon: IconButton(
+                      onPressed: _search,
+                      icon: const Icon(Icons.arrow_forward_rounded,
+                          color: AppColors.primary, size: 20),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                if (_searching)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 24),
+                    child: Center(
+                      child: SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2.4, color: AppColors.primary),
+                      ),
+                    ),
+                  )
+                else if (_results.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 20),
+                    child: Text(
+                      'Sin resultados entre tus publicaciones importadas. '
+                      'Probá otro término o reimportá desde Ajustes.',
+                      style: TextStyle(fontSize: 13, color: AppColors.textMuted),
+                    ),
+                  )
+                else
+                  Flexible(
+                    child: ListView.separated(
+                      shrinkWrap: true,
+                      itemCount: _results.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 6),
+                      itemBuilder: (_, i) {
+                        final l = _results[i];
+                        final linkedElsewhere = l.productId != null &&
+                            l.productId != widget.product.id;
+                        return SurfaceCard(
+                          padding: const EdgeInsets.all(10),
+                          onTap: _busy ? null : () => _link(l.mlItemId),
+                          child: Row(
+                            children: [
+                              ProductThumb(
+                                  imageUrl: l.thumbnail, size: 42, radius: 10),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(l.title ?? l.mlItemId,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                            fontSize: 13.5,
+                                            fontWeight: FontWeight.w600,
+                                            color: AppColors.textPrimary)),
+                                    Text(
+                                      '${l.mlItemId}${l.price != null ? ' · ${Fmt.ars(l.price!)}' : ''}'
+                                      '${linkedElsewhere ? ' · ya vinculada (se re-vincula acá)' : ''}',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                          fontSize: 11.5,
+                                          color: AppColors.textMuted),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const Icon(Icons.link_rounded,
+                                  color: AppColors.primary, size: 18),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                TextButton(
+                  onPressed: () => setState(() => _manualMode = true),
+                  child: const Text('Ingresar el código (MLA…) a mano',
+                      style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
+                ),
+              ] else ...[
+                TextField(
+                  controller: _query..clear(),
+                  autofocus: true,
+                  textCapitalization: TextCapitalization.characters,
+                  style:
+                      const TextStyle(color: AppColors.textPrimary, fontSize: 14),
+                  decoration: const InputDecoration(hintText: 'MLA1234567890'),
+                ),
+                const SizedBox(height: 16),
+                FilledButton(
+                  onPressed: _busy ? null : () => _link(_query.text),
+                  child: _busy
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2.4, color: AppColors.onPrimary),
+                        )
+                      : const Text('Vincular'),
+                ),
+                TextButton(
+                  onPressed: () => setState(() {
+                    _manualMode = false;
+                    _query.text = widget.product.title;
+                    _search();
+                  }),
+                  child: const Text('Volver al buscador',
+                      style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
+                ),
+              ],
               if (_error != null) ...[
                 const SizedBox(height: 10),
                 Text(_error!,
                     style: const TextStyle(color: AppColors.danger, fontSize: 13)),
               ],
-              const SizedBox(height: 16),
-              FilledButton(
-                onPressed: _busy ? null : _confirm,
-                child: _busy
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2.4, color: AppColors.onPrimary),
-                      )
-                    : const Text('Vincular'),
-              ),
             ],
           ),
         ),
@@ -363,19 +497,55 @@ class _ProfitCard extends StatelessWidget {
                   fontWeight: FontWeight.w500,
                   color: AppColors.textMuted)),
           const SizedBox(height: 12),
-          _Line(label: 'Precio de venta', value: Fmt.ars(e.salePrice)),
+          // RF-42: el precio de la publicación es de ML — read-only acá.
+          InkWell(
+            onTap: () => _showMlPriceInfo(context, e),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 9),
+                  child: Row(
+                    children: [
+                      Text('Precio en ML',
+                          style: TextStyle(
+                              fontSize: 13, color: AppColors.textMuted)),
+                      SizedBox(width: 5),
+                      Icon(Icons.lock_outline_rounded,
+                          size: 13, color: AppColors.textFaint),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 9),
+                  child: Text(Fmt.ars(e.salePrice),
+                      style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textPrimary)),
+                ),
+              ],
+            ),
+          ),
           _Line(
             label: 'Comisión ML',
             value: '− ${Fmt.ars(e.estSaleFee)}',
             valueColor: AppColors.danger,
           ),
-          _Line(
-            label: e.fxRate > 0
-                ? 'Costo (${Fmt.usd(e.costInSaleCurrency / e.fxRate)} × ${Fmt.ars(e.fxRate)})'
-                : 'Costo',
-            value: '− ${Fmt.ars(e.costInSaleCurrency)}',
-            valueColor: AppColors.danger,
-          ),
+          if (e.hasCost)
+            _Line(
+              label: e.fxRate > 0
+                  ? 'Costo (${Fmt.usd(e.costInSaleCurrency / e.fxRate)} × ${Fmt.ars(e.fxRate)})'
+                  : 'Costo',
+              value: '− ${Fmt.ars(e.costInSaleCurrency)}',
+              valueColor: AppColors.danger,
+            )
+          else
+            const _Line(
+              label: 'Costo',
+              value: 'sin cargar',
+              valueColor: AppColors.warning,
+            ),
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 11),
             child: Divider(height: 1, color: AppColors.border),
@@ -389,15 +559,28 @@ class _ProfitCard extends StatelessWidget {
                       fontWeight: FontWeight.w600,
                       color: AppColors.textPrimary)),
               Text(
-                Fmt.ars(e.netProfit),
+                e.netProfit == null ? '—' : Fmt.ars(e.netProfit!),
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w700,
-                  color: e.netProfit >= 0 ? AppColors.primary : AppColors.danger,
+                  color: e.netProfit == null
+                      ? AppColors.textMuted
+                      : e.netProfit! >= 0
+                          ? AppColors.primary
+                          : AppColors.danger,
                 ),
               ),
             ],
           ),
+          if (!e.hasCost)
+            const Padding(
+              padding: EdgeInsets.only(top: 6),
+              child: Text(
+                'Cargá el costo de compra para calcular ganancia, markup y margen.',
+                style:
+                    TextStyle(fontSize: 12, color: AppColors.textMuted, height: 1.4),
+              ),
+            ),
           const SizedBox(height: 13),
           Row(
             children: [
@@ -416,6 +599,160 @@ class _ProfitCard extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// RF-42: el precio de la publicación se administra en MercadoLibre; acá se
+/// mira y, si hace falta cambiarlo, se abre la publicación.
+void _showMlPriceInfo(BuildContext context, ProductEconomics e) {
+  showDialog<void>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      backgroundColor: AppColors.surface,
+      title: const Text('Precio administrado en ML',
+          style: TextStyle(color: AppColors.textPrimary, fontSize: 17)),
+      content: const Text(
+        'El precio de la publicación se modifica desde MercadoLibre. '
+        'La app lo espeja automáticamente en cada sincronización.',
+        style: TextStyle(color: AppColors.textMuted, height: 1.4),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(),
+          child: const Text('Entendido',
+              style: TextStyle(color: AppColors.textMuted)),
+        ),
+        if (e.permalink != null)
+          FilledButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              launchUrl(Uri.parse(e.permalink!),
+                  mode: LaunchMode.externalApplication);
+            },
+            child: const Text('Abrir en ML'),
+          ),
+      ],
+    ),
+  );
+}
+
+/// RF-42 · Márgenes por canal: ML (precio publicación − comisión − costo) vs
+/// venta local (precio local − costo). Ambos con el costo por política (ARS).
+class _ChannelMarginsCard extends StatelessWidget {
+  const _ChannelMarginsCard({required this.product, required this.economics});
+
+  final Product product;
+  final ProductEconomics economics;
+
+  @override
+  Widget build(BuildContext context) {
+    final e = economics;
+    final cost = e.hasCost ? e.costInSaleCurrency : null;
+
+    final localPrice = product.salePrice;
+    final localProfit = (cost != null && localPrice != null && localPrice > 0)
+        ? localPrice - cost
+        : null;
+    final localMargin = (localProfit != null && localPrice! > 0)
+        ? localProfit / localPrice * 100
+        : null;
+    final mlMargin = e.marginPct;
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: SurfaceCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Márgenes por canal',
+                style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                    color: AppColors.textMuted)),
+            const SizedBox(height: 12),
+            _ChannelRow(
+              label: 'MercadoLibre',
+              detail: 'con comisión ML descontada',
+              profit: e.netProfit,
+              marginPct: mlMargin,
+            ),
+            const SizedBox(height: 10),
+            _ChannelRow(
+              label: 'Venta local',
+              detail: localPrice == null || localPrice <= 0
+                  ? 'sin precio local cargado'
+                  : 'precio local ${Fmt.ars(localPrice)}',
+              profit: localProfit,
+              marginPct: localMargin,
+            ),
+            if (cost == null)
+              const Padding(
+                padding: EdgeInsets.only(top: 10),
+                child: Text('Cargá el costo de compra para ver los márgenes.',
+                    style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ChannelRow extends StatelessWidget {
+  const _ChannelRow({
+    required this.label,
+    required this.detail,
+    required this.profit,
+    required this.marginPct,
+  });
+
+  final String label;
+  final String detail;
+  final double? profit;
+  final double? marginPct;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label,
+                  style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textPrimary)),
+              Text(detail,
+                  style:
+                      const TextStyle(fontSize: 11.5, color: AppColors.textMuted)),
+            ],
+          ),
+        ),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text(
+              profit == null ? '—' : Fmt.arsSigned(profit!),
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+                color: profit == null
+                    ? AppColors.textMuted
+                    : profit! >= 0
+                        ? AppColors.primary
+                        : AppColors.danger,
+              ),
+            ),
+            Text(
+              marginPct == null ? 'margen —' : 'margen ${Fmt.pct(marginPct)}',
+              style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
+            ),
+          ],
+        ),
+      ],
     );
   }
 }
