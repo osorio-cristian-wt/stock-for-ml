@@ -6,12 +6,29 @@ import '../../data/queries.dart';
 import '../../theme/app_colors.dart';
 import '../../ui/widgets/app_widgets.dart';
 import '../scan/scan_screen.dart';
+import 'complete_costs_screen.dart';
 import 'product_comparison_screen.dart';
 import 'product_detail_screen.dart';
 import 'product_form_screen.dart';
 import 'product_tile.dart';
 
-enum _Filter { all, published, internal }
+enum _Filter { all, published, internal, attention }
+
+/// RF-40.4: el producto necesita acción del usuario — publicado sin costo
+/// (no se puede calcular ganancia), sin precio local (no se puede vender
+/// local, RF-43) o con la publicación frenada en ML (RF-37).
+bool _needsAttention(Product p, ProductEconomics? e) {
+  if (e != null && !e.hasCost) return true;
+  if (p.salePrice == null || p.salePrice! <= 0) return true;
+  return switch (e?.listingStatus) {
+    ListingStatus.paused ||
+    ListingStatus.inactive ||
+    ListingStatus.paymentRequired ||
+    ListingStatus.underReview =>
+      true,
+    _ => false,
+  };
+}
 
 /// Screen 04 · Productos. Live list with search, publication filter and a
 /// barcode-first "+" entry point (scan or manual).
@@ -127,15 +144,71 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
               ),
               data: (products) {
                 final filtered = _apply(products, economics);
+                final attentionCount = products
+                    .where((p) => _needsAttention(p, economics[p.id]))
+                    .length;
                 return Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
+                      if (attentionCount > 0 && _filter != _Filter.attention)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+                          child: SurfaceCard(
+                            color: AppColors.warningSoft,
+                            borderColor: AppColors.warning,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 14, vertical: 10),
+                            onTap: () =>
+                                setState(() => _filter = _Filter.attention),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.priority_high_rounded,
+                                    color: AppColors.warning, size: 18),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    '$attentionCount producto${attentionCount == 1 ? ' necesita' : 's necesitan'} tu atención '
+                                    '(costo, precio o publicación)',
+                                    style: const TextStyle(
+                                        fontSize: 12.5,
+                                        fontWeight: FontWeight.w600,
+                                        color: AppColors.textPrimary),
+                                  ),
+                                ),
+                                const Icon(Icons.chevron_right,
+                                    color: AppColors.warning, size: 18),
+                              ],
+                            ),
+                          ),
+                        ),
                       _FilterRow(
                         filter: _filter,
                         total: products.length,
+                        attention: attentionCount,
                         onChanged: (f) => setState(() => _filter = f),
                       ),
+                      if (_filter == _Filter.attention &&
+                          products.any((p) => p.purchaseCost <= 0))
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
+                          child: OutlinedButton.icon(
+                            onPressed: () => Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => const CompleteCostsScreen(),
+                              ),
+                            ),
+                            icon: const Icon(Icons.playlist_add_check_rounded,
+                                size: 18),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: AppColors.primary,
+                              side: const BorderSide(color: AppColors.border),
+                              minimumSize: const Size.fromHeight(42),
+                            ),
+                            label: const Text(
+                                'Completar costos uno por uno'),
+                          ),
+                        ),
                       if (categories.isNotEmpty) ...[
                         const SizedBox(height: 8),
                         _CategoryFilterRow(
@@ -213,6 +286,8 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
           if (!published) return false;
         case _Filter.internal:
           if (published) return false;
+        case _Filter.attention:
+          if (!_needsAttention(p, economics[p.id])) return false;
         case _Filter.all:
           break;
       }
@@ -232,10 +307,12 @@ class _FilterRow extends StatelessWidget {
     required this.filter,
     required this.total,
     required this.onChanged,
+    this.attention = 0,
   });
 
   final _Filter filter;
   final int total;
+  final int attention;
   final ValueChanged<_Filter> onChanged;
 
   @override
@@ -263,6 +340,14 @@ class _FilterRow extends StatelessWidget {
             selected: filter == _Filter.internal,
             onTap: () => onChanged(_Filter.internal),
           ),
+          if (attention > 0) ...[
+            const SizedBox(width: 7),
+            _Chip(
+              label: 'Atención · $attention',
+              selected: filter == _Filter.attention,
+              onTap: () => onChanged(_Filter.attention),
+            ),
+          ],
         ],
       ),
     );

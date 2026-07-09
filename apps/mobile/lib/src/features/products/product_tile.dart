@@ -61,13 +61,17 @@ class ProductTile extends StatelessWidget {
                 Row(
                   children: [
                     published
-                        ? TagChip('Publicado',
-                            color: AppColors.primary,
-                            background: AppColors.primarySoft,
-                            bold: true)
+                        ? ListingStatusChip(economics: economics)
                         : const TagChip('Interno'),
                     const SizedBox(width: 6),
                     _StockChip(product: product),
+                    if (economics?.isFulfillment ?? false) ...[
+                      const SizedBox(width: 6),
+                      const TagChip('Full',
+                          color: AppColors.onMlYellow,
+                          background: AppColors.mlYellow,
+                          bold: true),
+                    ],
                   ],
                 ),
               ],
@@ -92,6 +96,36 @@ class ProductTile extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+/// Chip con el estado real de la publicación (RF-37): antes solo decía
+/// "Publicado" y una pausada/inactiva era indistinguible de una activa.
+class ListingStatusChip extends StatelessWidget {
+  const ListingStatusChip({super.key, this.economics});
+
+  final ProductEconomics? economics;
+
+  @override
+  Widget build(BuildContext context) {
+    final e = economics;
+    final (label, color, background) = switch (e?.listingStatus) {
+      ListingStatus.active => ('Publicada', AppColors.primary, AppColors.primarySoft),
+      ListingStatus.paused when e!.isOutOfStock =>
+        ('Pausada · sin stock', AppColors.warning, AppColors.warningSoft),
+      ListingStatus.paused => ('Pausada', AppColors.warning, AppColors.warningSoft),
+      ListingStatus.underReview =>
+        ('En revisión', AppColors.warning, AppColors.warningSoft),
+      ListingStatus.closed => ('Finalizada', AppColors.textMuted, null),
+      ListingStatus.inactive => ('Inactiva', AppColors.danger, AppColors.dangerSoft),
+      ListingStatus.notYetActive => ('Procesándose', AppColors.textMuted, null),
+      ListingStatus.paymentRequired =>
+        ('Pago requerido', AppColors.danger, AppColors.dangerSoft),
+      // Filas anteriores a RF-37 (sin estado espejado aún): al menos avisa
+      // que está publicada.
+      _ => ('Publicada', AppColors.primary, AppColors.primarySoft),
+    };
+    return TagChip(label, color: color, background: background, bold: true);
   }
 }
 
