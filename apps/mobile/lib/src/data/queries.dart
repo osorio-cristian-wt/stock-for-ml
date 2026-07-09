@@ -425,6 +425,20 @@ final listingVariationsProvider =
       .watchListingVariations(listingId);
 });
 
+/// Todas las publicaciones ML de un producto (RF-48): visibiliza relistings
+/// y duplicados que la dedup por GTIN/SKU colapsó en un mismo producto.
+final productListingsProvider =
+    StreamProvider.family<List<MlListing>, String>((ref, productId) {
+  return ref
+      .watch(connectionRepositoryProvider)
+      .watchProductListings(productId);
+});
+
+/// Total de publicaciones espejadas (contador de la pestaña Productos).
+final listingCountProvider = StreamProvider<int>((ref) {
+  return ref.watch(connectionRepositoryProvider).watchListingCount();
+});
+
 /// One row of the own-products comparison (RF-19): profitability, margin,
 /// markup and rotation (units sold in the last 30 days).
 class ProductComparisonRow {

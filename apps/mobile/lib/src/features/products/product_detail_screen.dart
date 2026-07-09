@@ -14,6 +14,7 @@ import '../price_comparison/price_comparison_screen.dart';
 import '../stock_adjustment/stock_adjustment_sheet.dart';
 import '../stock_adjustment/transfer_sheet.dart';
 import 'product_form_screen.dart';
+import 'product_tile.dart' show ListingStatusChip;
 
 /// Screen 05 · Detalle con rentabilidad por unidad. Reactive to the live
 /// product stream, so a stock movement updates the numbers immediately.
@@ -100,6 +101,7 @@ class _Body extends StatelessWidget {
         _StockCard(product: product),
         _WarehouseStockCard(product: product),
         if (published) _VariationsCard(listingId: economics!.listingId),
+        _ListingsCard(productId: product.id),
         _HistoryCard(productId: product.id),
         if (published) ...[
           const SizedBox(height: 12),
@@ -1114,6 +1116,214 @@ class _VariationsCard extends ConsumerWidget {
             ],
           ),
         ),
+      ],
+    );
+  }
+}
+
+/// TODAS las publicaciones ML vinculadas al producto (RF-48). Un producto
+/// puede tener varias (relistings, tipos de publicación) y la dedup del
+/// import las colapsa acá — esta tarjeta las hace visibles y permite
+/// pausar/activar cada una desde la app. Oculta si no hay ninguna.
+class _ListingsCard extends ConsumerStatefulWidget {
+  const _ListingsCard({required this.productId});
+
+  final String productId;
+
+  @override
+  ConsumerState<_ListingsCard> createState() => _ListingsCardState();
+}
+
+class _ListingsCardState extends ConsumerState<_ListingsCard> {
+  final Set<String> _busy = {};
+
+  Future<void> _setStatus(MlListing l, String status) async {
+    if (status == 'paused') {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: AppColors.surface,
+          title: const Text('Pausar publicación',
+              style: TextStyle(color: AppColors.textPrimary)),
+          content: Text(
+            '${l.title ?? l.mlItemId} deja de estar visible en MercadoLibre '
+            'hasta que la actives de nuevo.',
+            style: const TextStyle(color: AppColors.textMuted),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancelar',
+                  style: TextStyle(color: AppColors.textMuted)),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: AppColors.warning),
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Pausar'),
+            ),
+          ],
+        ),
+      );
+      if (ok != true) return;
+    }
+    if (!mounted) return;
+    setState(() => _busy.add(l.mlItemId));
+    try {
+      await ref
+          .read(connectionRepositoryProvider)
+          .setListingStatus([l.mlItemId], status);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(status == 'active'
+              ? 'Publicación activada.'
+              : 'Publicación pausada.'),
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        showAppError(context, e,
+            title: 'No se pudo cambiar el estado en ML');
+      }
+    } finally {
+      if (mounted) setState(() => _busy.remove(l.mlItemId));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final listings =
+        ref.watch(productListingsProvider(widget.productId)).valueOrNull ??
+            const <MlListing>[];
+    if (listings.isEmpty) return const SizedBox.shrink();
+
+    return Column(
+      children: [
+        const SizedBox(height: 12),
+        SurfaceCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Publicaciones (${listings.length})',
+                  style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      color: AppColors.textMuted)),
+              const SizedBox(height: 10),
+              for (final l in listings) ...[
+                _ListingRow(
+                  listing: l,
+                  busy: _busy.contains(l.mlItemId),
+                  onActivate: () => _setStatus(l, 'active'),
+                  onPause: () => _setStatus(l, 'paused'),
+                ),
+                if (l != listings.last)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 8),
+                    child: Divider(height: 1, color: AppColors.border),
+                  ),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ListingRow extends StatelessWidget {
+  const _ListingRow({
+    required this.listing,
+    required this.busy,
+    required this.onActivate,
+    required this.onPause,
+  });
+
+  final MlListing listing;
+  final bool busy;
+  final VoidCallback onActivate;
+  final VoidCallback onPause;
+
+  @override
+  Widget build(BuildContext context) {
+    final l = listing;
+    // Pausada por el vendedor → se puede activar. Pausada por falta de stock
+    // NO: ML la reactiva solo cuando sube stock (el botón mentiría).
+    final canActivate = l.status == ListingStatus.paused && !l.isOutOfStock;
+    final canPause = l.status == ListingStatus.active;
+    return Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(l.title ?? l.mlItemId,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                      color: AppColors.textPrimary)),
+              const SizedBox(height: 3),
+              Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  ListingStatusChip.fromListing(l),
+                  if (l.isFulfillment)
+                    const TagChip('Full',
+                        color: AppColors.onMlYellow,
+                        background: AppColors.mlYellow,
+                        bold: true),
+                  Text(
+                    [
+                      l.mlItemId,
+                      if (l.price != null) Fmt.ars(l.price!),
+                      '${l.availableQuantity} u. en ML',
+                    ].join(' · '),
+                    style: const TextStyle(
+                        fontSize: 11, color: AppColors.textMuted),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 6),
+        if (busy)
+          const SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(
+                strokeWidth: 2.2, color: AppColors.primary),
+          )
+        else ...[
+          if (canPause)
+            IconButton(
+              onPressed: onPause,
+              tooltip: 'Pausar en ML',
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.pause_circle_outline,
+                  size: 20, color: AppColors.warning),
+            ),
+          if (canActivate)
+            IconButton(
+              onPressed: onActivate,
+              tooltip: 'Activar en ML',
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.play_circle_outline,
+                  size: 20, color: AppColors.primary),
+            ),
+          if (l.permalink != null)
+            IconButton(
+              onPressed: () => launchUrl(Uri.parse(l.permalink!),
+                  mode: LaunchMode.externalApplication),
+              tooltip: 'Ver en ML',
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.open_in_new_rounded,
+                  size: 18, color: AppColors.textFaint),
+            ),
+        ],
       ],
     );
   }

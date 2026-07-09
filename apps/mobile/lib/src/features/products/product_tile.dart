@@ -61,7 +61,7 @@ class ProductTile extends StatelessWidget {
                 Row(
                   children: [
                     published
-                        ? ListingStatusChip(economics: economics)
+                        ? ListingStatusChip.fromEconomics(economics)
                         : const TagChip('Interno'),
                     const SizedBox(width: 6),
                     _StockChip(product: product),
@@ -102,16 +102,24 @@ class ProductTile extends StatelessWidget {
 /// Chip con el estado real de la publicación (RF-37): antes solo decía
 /// "Publicado" y una pausada/inactiva era indistinguible de una activa.
 class ListingStatusChip extends StatelessWidget {
-  const ListingStatusChip({super.key, this.economics});
+  const ListingStatusChip({super.key, this.status, this.outOfStock = false});
 
-  final ProductEconomics? economics;
+  ListingStatusChip.fromEconomics(ProductEconomics? e, {super.key})
+      : status = e?.listingStatus,
+        outOfStock = e?.isOutOfStock ?? false;
+
+  ListingStatusChip.fromListing(MlListing l, {super.key})
+      : status = l.status,
+        outOfStock = l.isOutOfStock;
+
+  final ListingStatus? status;
+  final bool outOfStock;
 
   @override
   Widget build(BuildContext context) {
-    final e = economics;
-    final (label, color, background) = switch (e?.listingStatus) {
+    final (label, color, background) = switch (status) {
       ListingStatus.active => ('Publicada', AppColors.primary, AppColors.primarySoft),
-      ListingStatus.paused when e!.isOutOfStock =>
+      ListingStatus.paused when outOfStock =>
         ('Pausada · sin stock', AppColors.warning, AppColors.warningSoft),
       ListingStatus.paused => ('Pausada', AppColors.warning, AppColors.warningSoft),
       ListingStatus.underReview =>

@@ -119,6 +119,25 @@ class ConnectionRepository {
         .map((rows) => [for (final r in rows) ListingVariation.fromJson(r)]);
   }
 
+  /// Todas las publicaciones ML vinculadas a un producto, en vivo (RF-48):
+  /// un producto puede tener varias (relistings, tipos de publicación).
+  Stream<List<MlListing>> watchProductListings(String productId) {
+    return _client
+        .from('ml_listings')
+        .stream(primaryKey: ['id'])
+        .eq('product_id', productId)
+        .map((rows) => [for (final r in rows) MlListing.fromJson(r)]);
+  }
+
+  /// Cantidad total de publicaciones espejadas (para el contador de la
+  /// pestaña Productos: "N productos · M publicaciones").
+  Stream<int> watchListingCount() {
+    return _client
+        .from('ml_listings')
+        .stream(primaryKey: ['id'])
+        .map((rows) => rows.length);
+  }
+
   /// Busca publicaciones ESPEJADAS (RF-41): sync-items ya trae todas las del
   /// vendedor a `ml_listings`, así que el picker de vinculación no necesita
   /// consultar ML — busca sobre la base propia por título o código.
@@ -214,18 +233,30 @@ class ConnectionRepository {
     return [for (final r in rows) ImportJob.fromJson(r)];
   }
 
-  /// RF-47: reactiva publicaciones pausadas por el vendedor (PUT status=active
-  /// vía Edge Function). Las pausadas por falta de stock no lo necesitan: el
-  /// push de stock las reactiva solo.
-  Future<void> reactivateListings(List<String> mlItemIds) async {
+  /// RF-47/RF-48: cambia el estado de publicaciones en ML vía Edge Function
+  /// (`active` reactiva, `paused` pausa). Las pausadas por falta de stock no
+  /// necesitan reactivación explícita: el push de stock las reactiva solo.
+  Future<void> setListingStatus(List<String> mlItemIds, String status) async {
     final res = await _client.functions.invoke('reactivate-listing', body: {
       'ml_item_ids': mlItemIds,
+      'status': status,
     });
     final data = res.data as Map<String, dynamic>?;
     final errors = (data?['errors'] as List?) ?? const [];
     if (errors.isNotEmpty) {
       throw StateError(errors.join(' · '));
     }
+  }
+
+  Future<void> reactivateListings(List<String> mlItemIds) =>
+      setListingStatus(mlItemIds, 'active');
+
+  /// RF-49: recalibra el stock vendible de TODOS los productos — publicados
+  /// quedan en el available de su publicación ML, internos en 0. No pushea
+  /// nada a ML. Devuelve cuántos productos se ajustaron.
+  Future<int> recalibrateStock() async {
+    final res = await _client.rpc('recalibrate_stock');
+    return (res as num?)?.toInt() ?? 0;
   }
 
   /// RF-45: revoca credenciales y desvincula la cuenta ML. El histórico
