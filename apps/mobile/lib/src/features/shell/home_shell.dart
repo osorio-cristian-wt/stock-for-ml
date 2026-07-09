@@ -9,10 +9,11 @@ import '../home/home_screen.dart';
 import '../movements/movements_screen.dart';
 import '../products/products_screen.dart';
 import '../settings/settings_screen.dart';
+import '../stats/stats_screen.dart';
 
-/// The signed-in app shell: four tabs (Inicio · Productos · Movimientos ·
-/// Ajustes) over a persistent bottom navigation bar. Movimientos unifies
-/// sales, purchases and transfers behind one feed + speed dial.
+/// The signed-in app shell: five tabs (Inicio · Productos · Movimientos ·
+/// Stats · Ajustes) over a persistent bottom navigation bar. Movimientos
+/// unifies sales, purchases and transfers behind one feed + speed dial.
 class HomeShell extends ConsumerStatefulWidget {
   const HomeShell({super.key});
 
@@ -40,6 +41,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
       HomeScreen(onSeeAllLowStock: () => _goToTab(1), onOpenAlerts: _openAlerts),
       const ProductsScreen(),
       const MovementsScreen(),
+      const StatsScreen(),
       const SettingsScreen(),
     ];
 
@@ -103,10 +105,16 @@ class _BottomNav extends StatelessWidget {
                 onTap: () => onTap(2),
               ),
               _NavItem(
-                icon: Icons.settings_rounded,
-                label: 'Ajustes',
+                icon: Icons.insights_rounded,
+                label: 'Stats',
                 selected: index == 3,
                 onTap: () => onTap(3),
+              ),
+              _NavItem(
+                icon: Icons.settings_rounded,
+                label: 'Ajustes',
+                selected: index == 4,
+                onTap: () => onTap(4),
               ),
             ],
           ),
